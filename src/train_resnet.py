@@ -6,12 +6,38 @@ import os
 import random
 import torch
 import torch.nn as nn
+import numpy as np
+import cv2
 from torchvision import models, transforms
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 import sys
 sys.path.append(os.path.dirname(__file__))
 from models.three_way_decision import ThreeWayDecision, ThresholdTuner
+
+
+def get_train_transform():
+    return A.Compose([
+        A.Resize(256, 256),
+        A.RandomCrop(224, 224),
+        A.HorizontalFlip(p=0.5),
+        A.Rotate(limit=15, p=0.3),
+        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.3),
+        A.GaussNoise(p=0.2),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2()
+    ])
+
+
+def get_val_transform():
+    return A.Compose([
+        A.Resize(256, 256),
+        A.CenterCrop(224, 224),
+        A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ToTensorV2()
+    ])
 
 
 class CustomDS(Dataset):
@@ -159,24 +185,42 @@ def main():
     class TrainDS(Dataset):
         def __init__(self, data_list):
             self.data = data_list
-            self.transform = transforms.Compose([
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-            ])
-        
+            self.transform = get_train_transform()
+
         def __len__(self):
             return len(self.data)
-        
+
         def __getitem__(self, idx):
             path, label = self.data[idx]
-            img = Image.open(path).convert('RGB')
-            img = self.transform(img)
+            img = cv2.imread(path)
+            if img is None:
+                img = np.zeros((224, 224, 3), dtype=np.uint8)
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = self.transform(image=img)['image']
             return img, label
-    
+
+    class ValDS(Dataset):
+        def __init__(self, data_list):
+            self.data = data_list
+            self.transform = get_val_transform()
+
+        def __len__(self):
+            return len(self.data)
+
+        def __getitem__(self, idx):
+            path, label = self.data[idx]
+            img = cv2.imread(path)
+            if img is None:
+                img = np.zeros((224, 224, 3), dtype=np.uint8)
+            else:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = self.transform(image=img)['image']
+            return img, label
+
     train_ds = TrainDS(train_data)
-    val_ds = TrainDS(val_data)
-    test_ds = TrainDS(test_data)
+    val_ds = ValDS(val_data)
+    test_ds = ValDS(test_data)
     
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=32, shuffle=False)

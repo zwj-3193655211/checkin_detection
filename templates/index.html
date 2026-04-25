@@ -483,14 +483,14 @@
                     <div id="vizResult" style="display: none;">
                         <div class="viz-result">
                             <div class="viz-card">
-                                <h4>🖼️ 原始图片</h4>
+                                <h4>原始图片</h4>
                                 <img id="vizOriginal" src="" alt="原始图片">
                                 <div style="padding: 15px;">
                                     <p id="vizFilename" style="font-size: 13px; color: #718096;"></p>
                                 </div>
                             </div>
                             <div class="viz-card">
-                                <h4>🔥 GradCAM 热力图</h4>
+                                <h4>GradCAM 热力图</h4>
                                 <img id="vizHeatmap" src="" alt="热力图">
                                 <div style="padding: 15px;">
                                     <p style="font-size: 12px; color: #718096;">
@@ -571,7 +571,7 @@
                 const res = await fetch(`${API_BASE}/health`);
                 const data = await res.json();
                 document.getElementById('systemStatus').textContent =
-                    `✅ 系统就绪 | 模型已加载 | 三支决策 α=${data.three_way.split('=')[1]}`;
+                    `✅ 系统就绪 | 模型已加载 | 三支决策 α=${data.three_way.split('=')[1].split(' ')[0]} β=${data.three_way.split('=')[2]}`;
             } catch (e) {
                 document.getElementById('systemStatus').textContent = '❌ 服务未启动';
             }
