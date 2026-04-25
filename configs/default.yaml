@@ -1,0 +1,61 @@
+# Default configuration for checkin detection system
+
+# Model settings
+model:
+  name: "ThreeWayDecisionClassifier"
+  input_dim: 512
+  hidden_dim: 256
+  dropout: 0.3
+  # CLIP model: ViT-B/32 -> 512 features
+  # CLIP model: ViT-L/14 -> 768 features
+  clip_model: "ViT-B/32"
+
+# Three-way decision thresholds
+three_way_decision:
+  alpha: 0.85  # Positive threshold (normal)
+  beta: 0.35   # Negative threshold (abnormal)
+
+# Training settings
+training:
+  batch_size: 16
+  num_epochs: 50
+  learning_rate: 0.001
+  weight_decay: 0.01
+  early_stopping_patience: 15
+
+# Data settings
+data:
+  img_size: 224
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  num_workers: 4
+
+# Feature extraction
+features:
+  use_clip: true
+  cache_features: true
+  cache_dir: "./data/features_cache"
+
+# MC Dropout settings
+mc_dropout:
+  num_samples: 20
+  enable: true
+
+# Active learning settings
+active_learning:
+  enabled: false
+  strategy: "uncertainty"  # uncertainty, diversity, random
+  batch_size: 10
+  initial_labeled_ratio: 0.15
+
+# Inference settings
+inference:
+  device: "cuda"  # cuda or cpu
+  batch_size: 32
+
+# API settings
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
