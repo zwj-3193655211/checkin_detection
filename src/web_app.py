@@ -3,6 +3,9 @@
 """
 import os
 import json
+import io
+import base64
+import cv2
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
@@ -17,6 +20,7 @@ import sys
 
 sys.path.append(os.path.dirname(__file__))
 from models.three_way_decision import ThreeWayDecision
+from gradcam import GradCAM
 
 app = FastAPI(
     title="晨读晨练签到检测系统",
@@ -59,11 +63,12 @@ class ReviewRequest(BaseModel):
 
 model = None
 three_way_decision = None
+gradcam = None
 alpha = 0.70
 beta = 0.15
 
 def load_model_and_thresholds():
-    global model, three_way_decision, alpha, beta
+    global model, three_way_decision, gradcam, alpha, beta
 
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     model_path = os.path.join(base_dir, 'outputs', 'resnet18_best.pt')
@@ -82,6 +87,7 @@ def load_model_and_thresholds():
             beta = report['three_way_decision']['beta']
 
     three_way_decision = ThreeWayDecision(alpha=alpha, beta=beta)
+    gradcam = GradCAM(model)
     print(f"✅ 模型加载完成 | 三支决策: α={alpha:.2f} β={beta:.2f}")
 
 @app.get("/", response_class=HTMLResponse)
@@ -235,6 +241,55 @@ async def review(request: ReviewRequest):
 @app.get("/class_names")
 async def get_class_names():
     return {"classes": class_names}
+
+@app.post("/visualize")
+async def visualize(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+        raise HTTPException(status_code=400, detail="只支持 JPG/PNG 图片")
+
+    try:
+        img = Image.open(file.file).convert('RGB')
+        img_t = transform(img).unsqueeze(0)
+
+        with torch.no_grad():
+            outputs = model(img_t)
+            probs = torch.softmax(outputs, dim=1)
+            pred_idx = probs.argmax(dim=1).item()
+            pred_label = class_names[pred_idx]
+            confidence = probs[0, pred_idx].item()
+
+        heatmap, _ = gradcam.generate_cam(img_t, target_class=pred_idx)
+        overlay = gradcam.generate_overlay(img, heatmap)
+
+        import numpy as np
+        overlay_rgb = np.array(overlay)[:, :, ::-1]
+        _, buffer = cv2.imencode('.png', overlay_rgb)
+        img_base64 = base64.b64encode(buffer).decode()
+
+        return {
+            "filename": file.filename,
+            "prediction": pred_label,
+            "confidence": round(confidence, 4),
+            "probabilities": {
+                "晨读": round(probs[0, 0].item(), 4),
+                "晨跑": round(probs[0, 1].item(), 4),
+                "异常": round(probs[0, 2].item(), 4)
+            },
+            "heatmap": heatmap.tolist(),
+            "overlay_image": img_base64
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/visualize/classes")
+async def get_visualization_classes():
+    return {
+        "classes": [
+            {"id": 0, "name": "晨读", "description": "晨读签到活动"},
+            {"id": 1, "name": "晨跑", "description": "晨跑签到活动"},
+            {"id": 2, "name": "异常", "description": "未检测到签到活动"}
+        ]
+    }
 
 if __name__ == "__main__":
     load_model_and_thresholds()
