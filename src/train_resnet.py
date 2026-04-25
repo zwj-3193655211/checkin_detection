@@ -7,7 +7,6 @@ import random
 import torch
 import torch.nn as nn
 import numpy as np
-import cv2
 from torchvision import models, transforms
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
@@ -18,14 +17,18 @@ sys.path.append(os.path.dirname(__file__))
 from models.three_way_decision import ThreeWayDecision, ThresholdTuner
 
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 def get_train_transform():
     return A.Compose([
-        A.Resize(256, 256),
-        A.RandomCrop(224, 224),
-        A.HorizontalFlip(p=0.5),
-        A.Rotate(limit=15, p=0.3),
-        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05, p=0.3),
-        A.GaussNoise(p=0.2),
+        A.Resize(height=224, width=224),
         A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ToTensorV2()
     ])
@@ -129,15 +132,15 @@ def tune_three_way_decision(model, val_loader, device='cpu'):
     result = tuner.tune_on_validation(
         normal_probs,
         binary_labels,
-        alpha_range=(0.7, 0.95),
-        beta_range=(0.15, 0.5),
-        metric='f1_macro'
+        alpha_range=(0.6, 0.95),
+        beta_range=(0.01, 0.5),
+        metric='recall_safe'
     )
 
     print(f"✅ 三支决策阈值调优完成:")
     print(f"   最优 alpha: {result['alpha']:.2f}")
     print(f"   最优 beta: {result['beta']:.2f}")
-    print(f"   F1-Macro: {result['best_f1_macro']:.4f}")
+    print(f"   安全召回率: {result['best_recall_safe']:.4f}")
 
     boundary_result = tuner.analyze_boundary_size(normal_probs)
     print(f"   边界域样本比例: {boundary_result['boundary_ratio']*100:.1f}%")
@@ -145,43 +148,9 @@ def tune_three_way_decision(model, val_loader, device='cpu'):
     return decision_maker.alpha, decision_maker.beta
 
 
-def main():
-    print("=" * 60)
-    print("ResNet18 训练与评估")
-    print("=" * 60)
-    
-    # 加载数据
-    labels_file = r'c:\Users\31936\Desktop\晨读晨练签到打卡检测\checkin_detection\data\labels.json'
-    data_dir = r'c:\Users\31936\Desktop\晨读晨练签到打卡检测\checkin_detection\data\raw'
-    output_dir = r'c:\Users\31936\Desktop\晨读晨练签到打卡检测\checkin_detection\outputs'
-    
-    print(f"\n📂 数据目录: {data_dir}")
-    print(f"📄 标签文件: {labels_file}")
-    
-    labels = json.load(open(labels_file, encoding='utf-8'))['labels']
-    print(f"📊 总标注数: {len(labels)}")
-    
-    # 创建完整数据集
-    full_dataset = CustomDS(data_dir, labels)
-    
-    # 划分数据集 (70% 训练, 15% 验证, 15% 测试)
-    all_data = full_dataset.data.copy()
-    random.shuffle(all_data)
-    
-    n = len(all_data)
-    train_size = int(0.7 * n)
-    val_size = int(0.15 * n)
-    
-    train_data = all_data[:train_size]
-    val_data = all_data[train_size:train_size+val_size]
-    test_data = all_data[train_size+val_size:]
-    
-    print(f"\n📊 数据划分:")
-    print(f"  训练集: {len(train_data)} 张 ({len(train_data)/n*100:.1f}%)")
-    print(f"  验证集: {len(val_data)} 张 ({len(val_data)/n*100:.1f}%)")
-    print(f"  测试集: {len(test_data)} 张 ({len(test_data)/n*100:.1f}%)")
-    
-    # 创建数据集类
+def train_once(seed, train_data, val_data, test_data, data_dir, output_dir, num_epochs=5):
+    set_seed(seed)
+
     class TrainDS(Dataset):
         def __init__(self, data_list):
             self.data = data_list
@@ -192,11 +161,8 @@ def main():
 
         def __getitem__(self, idx):
             path, label = self.data[idx]
-            img = cv2.imread(path)
-            if img is None:
-                img = np.zeros((224, 224, 3), dtype=np.uint8)
-            else:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = Image.open(path).convert('RGB')
+            img = np.array(img)
             img = self.transform(image=img)['image']
             return img, label
 
@@ -210,124 +176,175 @@ def main():
 
         def __getitem__(self, idx):
             path, label = self.data[idx]
-            img = cv2.imread(path)
-            if img is None:
-                img = np.zeros((224, 224, 3), dtype=np.uint8)
-            else:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = Image.open(path).convert('RGB')
+            img = np.array(img)
             img = self.transform(image=img)['image']
             return img, label
 
     train_ds = TrainDS(train_data)
     val_ds = ValDS(val_data)
     test_ds = ValDS(test_data)
-    
+
     train_loader = DataLoader(train_ds, batch_size=32, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=32, shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=32, shuffle=False)
-    
-    # 加载预训练模型
-    print("\n🔄 加载预训练 ResNet18...")
+
+    print(f"\n🔄 加载预训练 ResNet18 (seed={seed})...")
     model = models.resnet18(weights='IMAGENET1K_V1')
     model.fc = nn.Linear(model.fc.in_features, 3)
-    
+
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-    
-    # 训练
-    print("\n🚀 开始训练...")
-    print("-" * 60)
-    
+
     best_val_acc = 0
-    num_epochs = 5
-    
+    best_model_state = None
+
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
         correct = 0
         total = 0
-        
+
         for batch_idx, (images, labels) in enumerate(train_loader):
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
-            
+
             running_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
-            
+
             if (batch_idx + 1) % 20 == 0:
                 print(f"  Epoch {epoch+1}/{num_epochs}, Batch {batch_idx+1}/{len(train_loader)}, Loss: {loss.item():.4f}")
-        
+
         train_acc = 100 * correct / total
-        
-        # 验证
         val_acc, _, _ = evaluate(model, val_loader)
-        
+
         print(f"Epoch {epoch+1}/{num_epochs} - 训练准确率: {train_acc:.2f}% - 验证准确率: {val_acc:.2f}%")
-        
-        # 保存最佳模型
+
         if val_acc > best_val_acc:
             best_val_acc = val_acc
-            best_model_path = os.path.join(output_dir, 'resnet18_best.pt')
-            torch.save(model.state_dict(), best_model_path)
+            best_model_state = model.state_dict().copy()
             print(f"  ✅ 保存最佳模型 (验证准确率: {val_acc:.2f}%)")
-    
-    print("-" * 60)
-    print("训练完成！")
 
-    print("\n📊 在测试集上评估...")
-    print("=" * 60)
-
-    best_val_acc, _, _ = evaluate(model, val_loader)
+    model.load_state_dict(best_model_state)
     test_acc, class_correct, class_total = evaluate(model, test_loader)
     alpha, beta = tune_three_way_decision(model, val_loader)
-    
+
+    return {
+        'seed': seed,
+        'val_acc': best_val_acc,
+        'test_acc': test_acc,
+        'alpha': alpha,
+        'beta': beta,
+        'class_correct': class_correct,
+        'class_total': class_total,
+        'model_state': best_model_state
+    }
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seeds', type=str, default='456', help='逗号分隔的随机种子列表，如: 42,123,456')
+    parser.add_argument('--epochs', type=int, default=5, help='训练轮数')
+    args = parser.parse_args()
+
+    seeds = [int(s.strip()) for s in args.seeds.split(',')]
+    num_epochs = args.epochs
+
+    print("=" * 60)
+    print("ResNet18 训练与评估")
+    print("=" * 60)
+    print(f"\n🎲 随机种子: {seeds}")
+
+    labels_file = r'c:\Users\31936\Desktop\晨读晨练签到打卡检测\checkin_detection\data\labels.json'
+    data_dir = r'c:\Users\31936\Desktop\晨读晨练签到打卡检测\checkin_detection\data\raw'
+    output_dir = r'c:\Users\31936\Desktop\晨读晨练签到打卡检测\checkin_detection\outputs'
+
+    labels = json.load(open(labels_file, encoding='utf-8'))['labels']
+    print(f"📊 总标注数: {len(labels)}")
+
+    full_dataset = CustomDS(data_dir, labels)
+    all_data = full_dataset.data.copy()
+    random.shuffle(all_data)
+
+    n = len(all_data)
+    train_size = int(0.7 * n)
+    val_size = int(0.15 * n)
+
+    train_data = all_data[:train_size]
+    val_data = all_data[train_size:train_size+val_size]
+    test_data = all_data[train_size+val_size:]
+
+    print(f"\n📊 数据划分:")
+    print(f"  训练集: {len(train_data)} 张 ({len(train_data)/n*100:.1f}%)")
+    print(f"  验证集: {len(val_data)} 张 ({len(val_data)/n*100:.1f}%)")
+    print(f"  测试集: {len(test_data)} 张 ({len(test_data)/n*100:.1f}%)")
+
+    best_result = None
+    all_results = []
+
+    for seed in seeds:
+        print("\n" + "=" * 60)
+        print(f"🚀 开始训练 (seed={seed})")
+        print("=" * 60)
+
+        result = train_once(seed, train_data, val_data, test_data, data_dir, output_dir, num_epochs)
+        all_results.append(result)
+
+        if best_result is None or result['val_acc'] > best_result['val_acc']:
+            best_result = result
+
+    print("\n" + "=" * 60)
+    print("📊 所有种子训练结果:")
+    print("=" * 60)
+    for r in all_results:
+        print(f"  Seed {r['seed']}: 验证准确率={r['val_acc']:.2f}%, 测试准确率={r['test_acc']:.2f}%, α={r['alpha']:.2f}, β={r['beta']:.2f}")
+
+    print("\n" + "=" * 60)
+    print(f"🏆 最佳结果 (seed={best_result['seed']})")
+    print("=" * 60)
+
+    best_model_path = os.path.join(output_dir, 'resnet18_best.pt')
+    torch.save(best_result['model_state'], best_model_path)
+
     print(f"\n🎯 最终测试结果:")
-    print(f"  总体准确率: {test_acc:.2f}%")
+    print(f"  总体准确率: {best_result['test_acc']:.2f}%")
     print(f"\n  各类别准确率:")
     for class_name in ['晨读', '晨跑', '异常']:
-        if class_total[class_name] > 0:
-            acc = 100 * class_correct[class_name] / class_total[class_name]
-            print(f"    {class_name}: {acc:.2f}% ({class_correct[class_name]}/{class_total[class_name]})")
-    
-    # 保存最终模型
+        if best_result['class_total'][class_name] > 0:
+            acc = 100 * best_result['class_correct'][class_name] / best_result['class_total'][class_name]
+            print(f"    {class_name}: {acc:.2f}% ({best_result['class_correct'][class_name]}/{best_result['class_total'][class_name]})")
+
     final_model_path = os.path.join(output_dir, 'resnet18.pt')
-    torch.save(model.state_dict(), final_model_path)
-    
+    torch.save(best_result['model_state'], final_model_path)
+
     print(f"\n✅ 模型已保存:")
     print(f"  最佳模型: {best_model_path}")
     print(f"  最终模型: {final_model_path}")
-    
-    # 保存评估报告
+
     report = {
-        'best_val_accuracy': best_val_acc,
-        'test_accuracy': test_acc,
+        'best_seed': best_result['seed'],
+        'all_seeds': [{'seed': r['seed'], 'val_acc': r['val_acc'], 'test_acc': r['test_acc']} for r in all_results],
+        'test_accuracy': best_result['test_acc'],
         'class_accuracy': {
-            name: 100 * class_correct[name] / class_total[name] if class_total[name] > 0 else 0
+            name: 100 * best_result['class_correct'][name] / best_result['class_total'][name] if best_result['class_total'][name] > 0 else 0
             for name in ['晨读', '晨跑', '异常']
         },
-        'dataset_size': {
-            'train': len(train_data),
-            'val': len(val_data),
-            'test': len(test_data)
-        },
-        'class_counts': {
-            'test': class_total
-        },
         'three_way_decision': {
-            'alpha': alpha,
-            'beta': beta
+            'alpha': best_result['alpha'],
+            'beta': best_result['beta']
         }
     }
-    
+
     report_path = os.path.join(output_dir, 'evaluation_report.json')
     with open(report_path, 'w', encoding='utf-8') as f:
         json.dump(report, f, ensure_ascii=False, indent=2)
-    
+
     print(f"\n📄 评估报告: {report_path}")
     print("=" * 60)
 

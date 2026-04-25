@@ -215,9 +215,9 @@ class ThresholdTuner:
         self,
         val_probs: torch.Tensor,
         val_labels: torch.Tensor,
-        alpha_range: Tuple[float, float] = (0.7, 0.95),
-        beta_range: Tuple[float, float] = (0.15, 0.5),
-        metric: str = 'f1_macro',
+        alpha_range: Tuple[float, float] = (0.6, 0.95),
+        beta_range: Tuple[float, float] = (0.01, 0.5),
+        metric: str = 'recall_safe',
     ) -> Dict:
         """
         在验证集上调优阈值
@@ -227,7 +227,7 @@ class ThresholdTuner:
             val_labels: 验证集真实标签 (0=正常, 1=异常)
             alpha_range: alpha搜索范围
             beta_range: beta搜索范围
-            metric: 优化指标
+            metric: 优化指标 (recall_safe=安全召回率)
 
         Returns:
             最佳阈值配置
@@ -237,9 +237,9 @@ class ThresholdTuner:
         best_metric = 0
         best_alpha, best_beta = 0.85, 0.35
 
-        # 网格搜索
-        for alpha in torch.arange(alpha_range[0], alpha_range[1], 0.05):
-            for beta in torch.arange(beta_range[0], beta_range[1], 0.05):
+        step = 0.01
+        for alpha in torch.arange(alpha_range[0], alpha_range[1], step):
+            for beta in torch.arange(beta_range[0], beta_range[1], step):
                 if alpha <= beta:
                     continue
 
@@ -248,21 +248,30 @@ class ThresholdTuner:
 
                 decisions = self.decision_maker.get_decisions(val_probs)
 
-                # 将三支决策映射到二分类 (正常=0, 异常=1, 不确定=1 or 忽略)
-                # 方案：将不确定视为预测为异常，需要人工审核
-                pred_binary = (decisions >= 1).long()  # 异常(1)和不确定(2)都视为需要审核
+                n_total = len(decisions)
+                n_correct = 0
 
-                # 计算指标
+                for i in range(n_total):
+                    true_label = val_labels[i].item()
+                    pred_decision = decisions[i].item()
+
+                    if pred_decision == 0:
+                        if true_label == 0:
+                            n_correct += 1
+                    else:
+                        if true_label == 1:
+                            n_correct += 1
+
+                accuracy = n_correct / n_total
+
                 if metric == 'accuracy':
-                    acc = accuracy_score(val_labels.cpu(), pred_binary.cpu())
-                    score = acc
-                elif metric == 'f1_macro':
-                    # 将不确定归类为异常后计算F1
-                    f1 = f1_score(val_labels.cpu(), pred_binary.cpu(), average='macro')
-                    score = f1
+                    score = accuracy
+                elif metric == 'recall_safe':
+                    recall_0 = ((decisions == 0) & (val_labels == 0)).sum().item() / max((val_labels == 0).sum().item(), 1)
+                    recall_1 = ((decisions >= 1) & (val_labels == 1)).sum().item() / max((val_labels == 1).sum().item(), 1)
+                    score = (recall_0 + recall_1) / 2
                 else:
-                    f1 = f1_score(val_labels.cpu(), pred_binary.cpu(), average='macro')
-                    score = f1
+                    score = accuracy
 
                 if score > best_metric:
                     best_metric = score
