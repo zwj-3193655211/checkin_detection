@@ -7,6 +7,9 @@ from PIL import Image, ImageTk
 import torch
 import torch.nn as nn
 from torchvision import models, transforms
+import sys
+sys.path.append(os.path.dirname(__file__))
+from models.three_way_decision import ThreeWayDecision
 
 
 class CheckInSystem:
@@ -17,9 +20,13 @@ class CheckInSystem:
         self.current_data_dir = None
         self.results = {}
         self.review_queue = []
-        
+        self.three_way_decision = None
+        self.alpha = 0.85
+        self.beta = 0.35
+
         self.setup_path()
         self.load_model()
+        self.load_three_way_thresholds()
         self.setup_ui()
     
     def setup_path(self):
@@ -38,6 +45,23 @@ class CheckInSystem:
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ])
+
+    def load_three_way_thresholds(self):
+        report_path = os.path.join(self.output_dir, 'evaluation_report.json')
+        if os.path.exists(report_path):
+            with open(report_path, 'r', encoding='utf-8') as f:
+                report = json.load(f)
+            if 'three_way_decision' in report:
+                self.alpha = report['three_way_decision']['alpha']
+                self.beta = report['three_way_decision']['beta']
+                self.three_way_decision = ThreeWayDecision(alpha=self.alpha, beta=self.beta)
+                print(f"✅ 已加载三支决策阈值: alpha={self.alpha}, beta={self.beta}")
+            else:
+                self.three_way_decision = ThreeWayDecision(alpha=self.alpha, beta=self.beta)
+                print(f"⚠️ 报告中无三支决策阈值，使用默认值: alpha={self.alpha}, beta={self.beta}")
+        else:
+            self.three_way_decision = ThreeWayDecision(alpha=self.alpha, beta=self.beta)
+            print(f"⚠️ 未找到评估报告，使用默认阈值: alpha={self.alpha}, beta={self.beta}")
     
     def setup_ui(self):
         self.root = tk.Tk()
@@ -123,7 +147,8 @@ class CheckInSystem:
         status_frame.pack(fill=tk.X, side=tk.BOTTOM)
         status_frame.pack_propagate(False)
         
-        self.status_label = tk.Label(status_frame, text="✅ 就绪 | 模型: ResNet18", 
+        self.status_label = tk.Label(status_frame,
+                                     text=f"✅ 就绪 | 模型: ResNet18 | 三支决策: α={self.alpha:.2f} β={self.beta:.2f}",
                                      font=('Microsoft YaHei', 10), bg='#1a5f7a', fg='white')
         self.status_label.pack(pady=8)
         
@@ -165,16 +190,20 @@ class CheckInSystem:
                 with torch.no_grad():
                     out = self.model(img_t)
                     prob = torch.softmax(out, dim=1)
-                    conf, pred = prob.max(1)
-                    
-                    conf_val = conf.item()
-                    diff = conf_val - prob.sort(dim=1)[0][0, -2].item()
-                
-                if conf_val > 0.7 and diff > 0.3:
-                    label = self.class_names[pred[0].item()]
-                else:
-                    label = '不确定'
-                
+
+                    normal_prob = prob[0, 0].item() + prob[0, 1].item()
+                    decision = self.three_way_decision.get_decisions(
+                        torch.tensor([normal_prob])
+                    )[0].item()
+
+                    if decision == 0:
+                        _, pred_idx = prob.max(1)
+                        label = self.class_names[pred_idx.item()]
+                    elif decision == 1:
+                        label = '异常'
+                    else:
+                        label = '不确定'
+
                 self.results[label].append(fn)
             except:
                 self.results['异常'].append(fn)

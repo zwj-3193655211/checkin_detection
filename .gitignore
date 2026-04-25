@@ -4,10 +4,12 @@ data/raw/*
 !data/raw/.gitkeep
 
 # 模型输出
-# 注意：.pt 模型文件较大，请手动上传或训练后生成
 outputs/*.pt
 outputs/*.pth
 outputs/__pycache__/
+
+# CLIP 特征缓存
+data/cache/features/*.pt
 
 # Python缓存
 __pycache__/

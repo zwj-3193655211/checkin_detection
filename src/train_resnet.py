@@ -9,6 +9,9 @@ import torch.nn as nn
 from torchvision import models, transforms
 from torch.utils.data import DataLoader, Dataset
 from PIL import Image
+import sys
+sys.path.append(os.path.dirname(__file__))
+from models.three_way_decision import ThreeWayDecision, ThresholdTuner
 
 
 class CustomDS(Dataset):
@@ -41,7 +44,7 @@ def evaluate(model, loader, device='cpu'):
     total = 0
     class_correct = {'晨读': 0, '晨跑': 0, '异常': 0}
     class_total = {'晨读': 0, '晨跑': 0, '异常': 0}
-    
+
     with torch.no_grad():
         for img, label in loader:
             img, label = img.to(device), label.to(device)
@@ -49,17 +52,71 @@ def evaluate(model, loader, device='cpu'):
             _, predicted = torch.max(outputs, 1)
             total += label.size(0)
             correct += (predicted == label).sum().item()
-            
-            # 各类别准确率
+
             for i, l in enumerate(label):
                 class_name = ['晨读', '晨跑', '异常'][l.item()]
                 class_total[class_name] += 1
                 if predicted[i] == l:
                     class_correct[class_name] += 1
-    
+
     accuracy = 100 * correct / total if total > 0 else 0
-    
+
     return accuracy, class_correct, class_total
+
+
+def get_validation_probs(model, val_loader, device='cpu'):
+    """获取验证集的正常/异常概率用于三支决策调优"""
+    model.eval()
+    all_probs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for img, label in val_loader:
+            img = img.to(device)
+            outputs = model(img)
+            probs = torch.softmax(outputs, dim=1)
+
+            normal_prob = probs[:, 0] + probs[:, 1]
+            abnormal_prob = probs[:, 2]
+
+            all_probs.append(torch.stack([normal_prob, abnormal_prob], dim=1))
+            all_labels.append(label)
+
+    all_probs = torch.cat(all_probs, dim=0)
+    all_labels = torch.cat(all_labels, dim=0)
+
+    binary_labels = (all_labels == 2).long()
+
+    return all_probs, all_labels, binary_labels
+
+
+def tune_three_way_decision(model, val_loader, device='cpu'):
+    """调优三支决策阈值"""
+    print("\n🔧 正在调优三支决策阈值...")
+
+    probs, labels, binary_labels = get_validation_probs(model, val_loader, device)
+    normal_probs = probs[:, 0]
+
+    decision_maker = ThreeWayDecision(alpha=0.85, beta=0.35)
+    tuner = ThresholdTuner(decision_maker)
+
+    result = tuner.tune_on_validation(
+        normal_probs,
+        binary_labels,
+        alpha_range=(0.7, 0.95),
+        beta_range=(0.15, 0.5),
+        metric='f1_macro'
+    )
+
+    print(f"✅ 三支决策阈值调优完成:")
+    print(f"   最优 alpha: {result['alpha']:.2f}")
+    print(f"   最优 beta: {result['beta']:.2f}")
+    print(f"   F1-Macro: {result['best_f1_macro']:.4f}")
+
+    boundary_result = tuner.analyze_boundary_size(normal_probs)
+    print(f"   边界域样本比例: {boundary_result['boundary_ratio']*100:.1f}%")
+
+    return decision_maker.alpha, decision_maker.beta
 
 
 def main():
@@ -177,12 +234,13 @@ def main():
     
     print("-" * 60)
     print("训练完成！")
-    
-    # 加载最佳模型进行测试
+
     print("\n📊 在测试集上评估...")
     print("=" * 60)
-    model.load_state_dict(torch.load(best_model_path))
+
+    best_val_acc, _, _ = evaluate(model, val_loader)
     test_acc, class_correct, class_total = evaluate(model, test_loader)
+    alpha, beta = tune_three_way_decision(model, val_loader)
     
     print(f"\n🎯 最终测试结果:")
     print(f"  总体准确率: {test_acc:.2f}%")
@@ -215,6 +273,10 @@ def main():
         },
         'class_counts': {
             'test': class_total
+        },
+        'three_way_decision': {
+            'alpha': alpha,
+            'beta': beta
         }
     }
     
