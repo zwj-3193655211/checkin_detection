@@ -3,8 +3,8 @@
 
 功能:
 - 先选主类别，再勾选特征
-- 晨读特征：人物、座椅、教室、投影幕布
-- 晨跑特征：操场、天空、人物、绿地、旗杆、号码牌
+- 晨读特征：人脸、蓝色桌子、教室、投影幕布
+- 晨跑特征：人脸、跑道、天空、绿地、树木、旗杆、号码布、主席台
 """
 
 import os
@@ -31,26 +31,6 @@ class FeatureLabelTool:
     # 异常原因
     ABNORMAL_REASONS = ["太暗", "没有人", "场景不对", "背景模糊"]
 
-    # CLIP特征检测阈值（分特征设置）
-    # 策略：降低阈值减少漏检，提高召回率
-    FEATURE_THRESHOLDS = {
-        # 晨读特征
-        "人脸": 0.20,      # 降低0.02，减少漏检
-        "蓝色桌子": 0.22,  # 降低0.03，可能与其他蓝色混淆
-        "教室": 0.22,     # 降低0.03，泛化较强
-        "投影幕布": 0.18,  # 降低0.02，特征明显容易检测
-
-        # 晨跑特征
-        "人脸": 0.20,
-        "跑道": 0.20,      # 降低0.02，颜色特征明显
-        "天空": 0.16,      # 降低0.02，容易检测
-        "绿地": 0.16,      # 降低0.02，容易检测
-        "树木": 0.20,
-        "旗杆": 0.13,     # 降低0.02，容易漏检
-        "号码布": 0.13,    # 降低0.02，容易漏检
-        "主席台": 0.18,
-    }
-
     def __init__(self, picture_dir: str, output_file: str = None):
         self.picture_dir = Path(picture_dir)
         self.output_file = output_file or str(self.picture_dir.parent / "data" / "labels.json")
@@ -60,24 +40,18 @@ class FeatureLabelTool:
         self.image_extensions = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')
         self.image_files = self._get_image_files()
 
-        random.seed(42)
-        self.original_order = self.image_files.copy()
-        random.shuffle(self.image_files)
+        random.seed(42)  # 固定随机种子，确保可重复性
+        self.original_order = sorted(self.image_files)  # 保持字母顺序，不打乱
+        self.image_files = self.original_order.copy()  # 初始顺序
 
         self.labels = self._load_labels()
-
-        # 加载MLP和CLIP用于预标注
-        self.mlp = None
-        self.clip_model = None
-        self.preprocess = None
-        self._load_models()
 
         self.current_idx = 0
         self.filter_mode = None
 
         # 初始化 tkinter
         self.root = tk.Tk()
-        self.root.title("晨读晨练特征标注工具 (MLP预填)")
+        self.root.title("晨读晨练特征标注工具")
         self.root.geometry("1000x850")
 
         self.main_label_var = tk.StringVar(value="晨读")
@@ -88,59 +62,6 @@ class FeatureLabelTool:
 
         if self.image_files:
             self._show_image()
-
-    def _load_models(self):
-        """加载MLP和CLIP模型用于预标注"""
-        try:
-            import torch
-            import clip
-            import torch.nn as nn
-
-            # 加载CLIP
-            device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.clip_model, self.preprocess = clip.load("ViT-B/32", device=device)
-            self.clip_model.eval()
-            self.device = device
-
-            # 特征提示词
-            self.FEATURE_PROMPTS = {
-                "晨读": {
-                    "人脸": "a photo of a human face",
-                    "蓝色桌子": "a photo of blue desks",
-                    "教室": "a photo of classroom",
-                    "投影幕布": "a photo of projection screen",
-                },
-                "晨跑": {
-                    "人脸": "a photo of a human face",
-                    "跑道": "a photo of running track",
-                    "天空": "a photo of blue sky",
-                    "绿地": "a photo of green grass",
-                    "树木": "a photo of trees",
-                    "旗杆": "a photo of flagpole",
-                    "号码布": "a photo of number bib",
-                    "主席台": "a photo of grandstand",
-                }
-            }
-
-            # 加载MLP
-            class MLP(nn.Module):
-                def __init__(self):
-                    super().__init__()
-                    self.net = nn.Sequential(
-                        nn.Linear(512, 256), nn.ReLU(), nn.Dropout(0.3),
-                        nn.Linear(256, 128), nn.ReLU(), nn.Dropout(0.3),
-                        nn.Linear(128, 3))
-                def forward(self, x):
-                    return self.net(x)
-
-            self.mlp = MLP()
-            model_path = self.picture_dir.parent / "cache" / "mlp_model.pt"
-            if model_path.exists():
-                self.mlp.load_state_dict(torch.load(model_path))
-                self.mlp.eval()
-                print(f"MLP+CLIP已加载，使用设备: {device}")
-        except Exception as e:
-            print(f"模型加载失败: {e}")
 
     def _get_image_files(self) -> list:
         files = []
@@ -351,74 +272,6 @@ class FeatureLabelTool:
         self._on_main_label_change()
         self._load_feature_vars()
 
-    def _auto_predict(self, filepath):
-        """用MLP预测主类别，CLIP相似度预填特征"""
-        print(f"DEBUG: _auto_predict called for {filepath}")
-        print(f"DEBUG: clip_model exists: {self.clip_model is not None}")
-        print(f"DEBUG: FEATURE_PROMPTS exists: {hasattr(self, 'FEATURE_PROMPTS')}")
-
-        if not self.clip_model:
-            print("DEBUG: clip_model is None, skipping")
-            return
-
-        try:
-            import torch
-            import clip
-
-            # CLIP特征提取
-            img = Image.open(filepath).convert('RGB')
-            img_input = self.preprocess(img).unsqueeze(0).to(self.device)
-
-            with torch.no_grad():
-                img_features = self.clip_model.encode_image(img_input)
-                img_features = img_features / img_features.norm(dim=-1, keepdim=True)
-
-            # MLP预测主类别
-            main_label = "晨读"
-            if self.mlp:
-                with torch.no_grad():
-                    out = self.mlp(img_features)
-                    probs = torch.softmax(out, dim=1)
-                    pred = probs.argmax(dim=1).item()
-                    main_label = ["晨读", "晨跑", "异常"][pred]
-
-            print(f"DEBUG: predicted main_label = {main_label}")
-
-            self.main_label_var.set(main_label)
-            self._on_main_label_change()
-
-            # 重置特征勾选
-            for var in self.feature_vars.values():
-                var.set(False)
-
-            # CLIP相似度预填特征
-            prompts = self.FEATURE_PROMPTS.get(main_label, {})
-            print(f"DEBUG: prompts = {prompts}")
-            prompt_list = list(prompts.values())
-
-            if prompt_list:
-                text_tokens = clip.tokenize(prompt_list).to(self.device)
-                with torch.no_grad():
-                    text_features = self.clip_model.encode_text(text_tokens)
-                    text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-
-                similarities = (img_features @ text_features.T).cpu().numpy()[0]
-
-                print(f"DEBUG: similarities = {similarities}")
-
-                # 使用分特征动态阈值
-                for i, feat_name in enumerate(prompts.keys()):
-                    key = f"{main_label}_{feat_name}"
-                    if key in self.feature_vars:
-                        # 获取该特征的阈值
-                        threshold = self.FEATURE_THRESHOLDS.get(feat_name, 0.2)
-                        result = bool(similarities[i] > threshold)
-                        print(f"DEBUG: {feat_name} sim={similarities[i]:.3f} thresh={threshold:.2f} -> {result}")
-                        self.feature_vars[key].set(result)
-
-        except Exception as e:
-            print(f"预测失败: {e}")
-
     def _load_feature_vars(self):
         filename = self.image_files[self.current_idx]
 
@@ -508,20 +361,21 @@ class FeatureLabelTool:
 
             self.filename_label.config(text=f"{filename}")
 
-            # 加载已有标注或用MLP+CLIP预填
+            # 加载已有标注或重置为默认状态
             has_label = filename in self.labels
-            has_features = has_label and self.labels[filename].get('features')
 
-            # 只在完全没有任何标注时才使用MLP预填
-            # 如果已有主类别标注，即使没有features也不覆盖
-            if not has_label:
-                # 完全新图片，用MLP+CLIP预填
-                self._auto_predict(filepath)
-                self.status_label.config(text=f"MLP预填: {self.main_label_var.get()}", foreground="orange")
-            else:
+            if has_label:
                 # 已有标注，加载已有内容
                 self._load_feature_vars()
                 self.status_label.config(text=f"已有标注: {self.labels[filename].get('label')}", foreground="blue")
+            else:
+                # 新图片，重置为默认状态（晨读）
+                self.main_label_var.set("晨读")
+                self._on_main_label_change()
+                for var in self.feature_vars.values():
+                    var.set(False)
+                self.abnormal_var.set("")
+                self.status_label.config(text="新图片 - 请标注", foreground="orange")
 
             self._update_progress()
 
@@ -563,7 +417,6 @@ class FeatureLabelTool:
                 if f in self.labels and self.labels[f].get('label') == filter_type
             ]
 
-        random.shuffle(self.image_files)
         self.current_idx = 0
 
         if self.image_files:
@@ -573,7 +426,6 @@ class FeatureLabelTool:
             self.filter_combo.set('全部')
             self.filter_mode = None
             self.image_files = self.original_order.copy()
-            random.shuffle(self.image_files)
             self.current_idx = 0
             self._show_image()
 

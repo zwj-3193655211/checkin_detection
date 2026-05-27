@@ -23,6 +23,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"
 CACHE_DIR = DATA_DIR / "cache" / "features"
+PICTURE_DIR = DATA_DIR / "raw"  # 图片目录
 
 
 def check_image_quality(image_path: str) -> dict:
@@ -284,7 +285,7 @@ def split_dataset(
     output_file: str = "split_config.json"
 ) -> dict:
     """
-    划分训练集/验证集/测试集
+    划分训练集/验证集/测试集（按类别分层采样）
 
     Args:
         train_ratio: 训练集比例
@@ -303,13 +304,35 @@ def split_dataset(
         if f.lower().endswith(image_extensions)
     ])
 
-    # 按学号分组，保持各学号的数据分布
-    student_images = defaultdict(list)
+    # 加载标注文件获取类别信息
+    labels_file = DATA_DIR / "labels.json"
+    labels = {}
+    if labels_file.exists():
+        with open(labels_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            labels = data.get('labels', data)
+    
+    print(f"已加载 {len(labels)} 个标注")
+
+    # 按类别分组
+    category_files = {
+        '晨读': [],
+        '晨跑': [],
+        '异常': [],
+        '未知': []  # 未标注的图片
+    }
+
     for filename in image_files:
-        parts = filename.replace('.jpeg', '').replace('.jpg', '').split('-')
-        if len(parts) >= 1:
-            student_id = parts[0]
-            student_images[student_id].append(filename)
+        label_info = labels.get(filename, {})
+        category = label_info.get('label', '未知')
+        if category not in category_files:
+            category = '未知'
+        category_files[category].append(filename)
+
+    # 输出各类别数量
+    print("\n各类别样本数:")
+    for cat, files in category_files.items():
+        print(f"  {cat}: {len(files)}")
 
     # 分层划分
     train_files = []
@@ -318,15 +341,51 @@ def split_dataset(
 
     random.seed(42)
 
-    for student_id, files in student_images.items():
+    for category, files in category_files.items():
         random.shuffle(files)
         n = len(files)
-        n_train = int(n * train_ratio)
-        n_val = int(n * val_ratio)
+        
+        if category == '异常' or category == '未知':
+            # 异常和未知样本：全部放入验证集和测试集（训练集不包含）
+            n_val = int(n * val_ratio / (val_ratio + test_ratio))
+            n_test = n - n_val
+            
+            val_files.extend(files[:n_val])
+            test_files.extend(files[n_val:])
+            
+            print(f"\n{category} 划分（训练集不包含）:")
+            print(f"  训练: 0, 验证: {n_val}, 测试: {n_test}")
+        else:
+            # 正常类别（晨读/晨跑）：按比例划分到所有集合
+            n_train = int(n * train_ratio)
+            n_val = int(n * val_ratio)
+            
+            train_files.extend(files[:n_train])
+            val_files.extend(files[n_train:n_train+n_val])
+            test_files.extend(files[n_train+n_val:])
+            
+            print(f"\n{category} 划分:")
+            print(f"  训练: {n_train}, 验证: {n_val}, 测试: {len(files) - n_train - n_val}")
 
-        train_files.extend(files[:n_train])
-        val_files.extend(files[n_train:n_train+n_val])
-        test_files.extend(files[n_train+n_val:])
+    # 打乱最终列表
+    random.shuffle(train_files)
+    random.shuffle(val_files)
+    random.shuffle(test_files)
+
+    # 统计各集合中的类别分布
+    def count_categories(file_list):
+        counts = {'晨读': 0, '晨跑': 0, '异常': 0, '未知': 0}
+        for f in file_list:
+            label_info = labels.get(f, {})
+            cat = label_info.get('label', '未知')
+            if cat not in counts:
+                cat = '未知'
+            counts[cat] += 1
+        return counts
+
+    train_counts = count_categories(train_files)
+    val_counts = count_categories(val_files)
+    test_counts = count_categories(test_files)
 
     split_config = {
         'train_files': train_files,
@@ -337,6 +396,9 @@ def split_dataset(
             'val': len(val_files),
             'test': len(test_files),
             'total': len(image_files),
+            'train_categories': train_counts,
+            'val_categories': val_counts,
+            'test_categories': test_counts,
         },
         'ratios': {
             'train': train_ratio,
@@ -350,8 +412,11 @@ def split_dataset(
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(split_config, f, ensure_ascii=False, indent=2)
 
-    print(f"Dataset split saved to {output_path}")
+    print(f"\nDataset split saved to {output_path}")
     print(f"Train: {len(train_files)}, Val: {len(val_files)}, Test: {len(test_files)}")
+    print(f"\n训练集类别分布: {train_counts}")
+    print(f"验证集类别分布: {val_counts}")
+    print(f"测试集类别分布: {test_counts}")
 
     return split_config
 

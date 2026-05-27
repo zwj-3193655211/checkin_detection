@@ -10,30 +10,33 @@ import torch.nn as nn
 import numpy as np
 from pathlib import Path
 
-# ==================== MLP模型 ====================
-class MLP(nn.Module):
-    def __init__(self, input_dim=512, num_classes=3):
-        super(MLP, self).__init__()
-        self.net = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_classes)
-        )
+from models.mlp import MLPClassifier
+from models.mlp_features_optimized import MLPFeaturesOptimized
 
-    def forward(self, x):
-        return self.net(x)
+# ==================== 特征索引定义（11维）====================
+FEATURE_INDEX = {
+    "人脸": 0,              # 公共特征
+    "晨读_蓝色桌子": 1,
+    "晨读_教室": 2,
+    "晨读_投影幕布": 3,
+    "晨跑_跑道": 4,
+    "晨跑_天空": 5,
+    "晨跑_绿地": 6,
+    "晨跑_树木": 7,
+    "晨跑_旗杆": 8,
+    "晨跑_号码布": 9,
+    "晨跑_主席台": 10,
+}
 
 # ==================== 参数 ====================
-# 三支决策阈值（最优配置：漏检率=0%，审核率<30%）
-# 关键：置信度分布分析显示大部分样本置信度>0.999
-# 设置ALPHA_ACCEPT=0.9996，确保异常不被误判，同时保持低审核率
-ALPHA_ACCEPT = 0.9996  # 最优阈值：漏检0%，审核3.73%
-ALPHA_REJECT = 0.20  # 保持低阈值避免误拒绝
-MIN_FEATURES = 2  # 最少特征数
+# 三支决策阈值（Temperature Scaling + 四规则过滤）
+TEMPERATURE = 5.0        # 温度缩放参数，让置信度分布更合理
+ALPHA_ACCEPT = 0.85       # 置信度阈值：低于此值进入待审核（优化后）
+ALPHA_AUTO_PASS = 0.85    # 自动通过最低置信度要求（优化后）
+FEATURE_THRESHOLD = 0.60   # 特征预测阈值：高于此值才算检测到该特征（优化后）
+MIN_FEATURES = 3          # 最少特征数：低于此值进入待审核（包含人脸）
+RUN_FEATURE_THRESH = 5    # 晨跑自动通过特征数阈值
+READ_FEATURE_THRESH = 3   # 晨读自动通过特征数阈值
 
 # CLIP文本提示词（用于特征相似度计算）
 # 与feature_label_tool.py保持一致
@@ -48,7 +51,7 @@ CHENPAO_PROMPTS = [
     "a photo of running track",
     "a photo of blue sky",
     "a photo of green grass",
-    "a photo of trees",
+    "a photo of red trees",
     "a photo of flagpole",
     "a photo of number bib",
     "a photo of grandstand",
@@ -68,13 +71,24 @@ class MLPCheckInSystem:
         self.clip_model.eval()
         print(f"CLIP已加载: {self.device}")
 
-        # 加载MLP（分类器）
+        # 加载MLP（双MLP）
         print("加载MLP...")
-        self.mlp = MLP()
-        self.mlp.load_state_dict(torch.load('outputs/mlp_model.pt'))
-        self.mlp.eval()
-        print("MLP已加载")
-        self.id2label = {0: '晨读', 1: '晨跑', 2: '异常'}
+        base = os.path.dirname(os.path.abspath(__file__))
+        data_dir = os.path.join(os.path.dirname(base), 'data')
+        
+        # 主分类器 - 二分类模型（晨读/晨跑）
+        self.mlp_classifier = MLPClassifier(input_dim=512, hidden_dim=256, output_dim=2)
+        self.mlp_classifier.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_classifier.pt')))
+        self.mlp_classifier.eval()
+        print("  - mlp_classifier.pt 已加载（二分类模型）")
+        
+        # 特征预测器
+        self.mlp_features = MLPFeaturesOptimized(input_dim=512, hidden_dim=512, output_dim=11, dropout=0.3)
+        self.mlp_features.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_features_optimized.pt')))
+        self.mlp_features.eval()
+        print("  - mlp_features.pt 已加载")
+        
+        self.id2label = {0: '晨读', 1: '晨跑'}
 
         # 注意：检测系统不需要加载标签文件，直接使用模型进行预测
 
@@ -83,6 +97,10 @@ class MLPCheckInSystem:
         self.results = {'晨读': [], '晨跑': [], '异常': [], '待审核': []}
         self.scores = {}
         self.review_queue = []
+        self.review_corrections = {}  # 记录纠正行为: {filename: {'original': '晨读', 'corrected': '晨跑'}}
+        self.total_reviews = 0  # 已审核数量
+        self.corrected_count = 0  # 自动通过中被纠正的数量（真正的模型错误）
+        self.review_confirmed = 0  # 待审核中确认原预测的数量（不算错误）
 
         self.setup_paths()
         self.setup_ui()
@@ -149,7 +167,7 @@ class MLPCheckInSystem:
                                    bg='#e8f4f8', fg='#1a5f7a', padx=15, pady=10)
         param_frame.pack(fill=tk.X, pady=(0, 20))
 
-        params_text = f"MLP模型 | 自动接受≥{ALPHA_ACCEPT} | 自动拒绝≤{ALPHA_REJECT} | 特征勾选辅助"
+        params_text = f"二分类MLP | 置信度≥{ALPHA_ACCEPT} | 最小特征数≥{MIN_FEATURES}"
         tk.Label(param_frame, text=params_text, font=('Consolas', 10), bg='#e8f4f8', fg='#666').pack()
 
         # 结果显示
@@ -181,7 +199,7 @@ class MLPCheckInSystem:
         self.root.mainloop()
 
     def predict(self, image_path):
-        """MLP预测"""
+        """双MLP预测"""
         # CLIP特征提取
         img = Image.open(image_path).convert('RGB')
         img_input = self.preprocess(img).unsqueeze(0).to(self.device)
@@ -189,15 +207,20 @@ class MLPCheckInSystem:
         with torch.no_grad():
             image_features = self.clip_model.encode_image(img_input)
 
-        # MLP预测
+        # MLP预测（双MLP）
         with torch.no_grad():
-            out = self.mlp(image_features.float())
+            # 主分类器
+            out = self.mlp_classifier(image_features.float())
             probs = torch.softmax(out, dim=1)
-            pred = probs.argmax(dim=1).item()
-            confidence = probs[0][pred].item()
+            pred_main = probs.argmax(dim=1).item()
+            confidence = probs[0][pred_main].item()
+            pred_label = self.id2label.get(pred_main, '未知')
+            
+            # 特征预测器
+            out_features = self.mlp_features(image_features.float(), inference=True)
+            feature_probs = torch.sigmoid(out_features)[0].tolist()
 
-        label = self.id2label.get(pred, '未知')
-        return label, confidence
+        return pred_label, confidence
 
     def predict_with_decision(self, image_path):
         """带三支决策的预测，同时计算特征得分(可解释性)"""
@@ -208,40 +231,56 @@ class MLPCheckInSystem:
         with torch.no_grad():
             image_features = self.clip_model.encode_image(img_input)
 
-        # MLP预测
+        # 双MLP预测 + Temperature Scaling
         with torch.no_grad():
-            out = self.mlp(image_features.float())
-            probs = torch.softmax(out, dim=1)
-            pred = probs.argmax(dim=1).item()
-            confidence = probs[0][pred].item()
+            # 主分类器
+            out = self.mlp_classifier(image_features.float())
+            probs = torch.softmax(out / TEMPERATURE, dim=1)
+            pred_main = probs.argmax(dim=1).item()
+            confidence = probs[0][pred_main].item()
+            pred_label = self.id2label.get(pred_main, '未知')
+            
+            # 特征预测器
+            out_features = self.mlp_features(image_features.float(), inference=True)
+            feature_probs = torch.sigmoid(out_features)[0].tolist()
 
-        label = self.id2label.get(pred, '未知')
+        # 号码布单独增强（乘以2）
+        feature_probs[9] = min(feature_probs[9] * 2, 1.0)
 
-        # 计算CLIP特征相似度(可解释性)
-        text_tokens = clip.tokenize(CHENIDU_PROMPTS + CHENPAO_PROMPTS).to(self.device)
-        with torch.no_grad():
-            text_features = self.clip_model.encode_text(text_tokens)
-            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        # MLP特征预测(可解释性)
+        feature_names = ["人脸", "蓝色桌子", "教室", "投影幕布", "跑道", "天空", "绿地", "树木", "旗杆", "号码布", "主席台"]
+        feature_sims = {name: float(feature_probs[i]) for i, name in enumerate(feature_names)}
 
-        similarities = (image_features @ text_features.T).cpu().numpy()[0]
-        feature_sims = {}
-        for i, p in enumerate(CHENIDU_PROMPTS):
-            feature_sims[p] = float(similarities[i])
-        for i, p in enumerate(CHENPAO_PROMPTS):
-            feature_sims[p] = float(similarities[len(CHENIDU_PROMPTS) + i])
+        # 统计高概率特征数(用于可解释性)
+        high_sim_count = sum(1 for p in feature_probs if p > FEATURE_THRESHOLD)
 
-        # 统计高相似度特征数(用于可解释性) - 使用统一的FEATURE_SIM_THRESHOLD
-        high_sim_count = sum(1 for v in similarities if v > FEATURE_SIM_THRESHOLD)
-
-        # 三支决策规则：只用MLP置信度
-        if confidence >= ALPHA_ACCEPT:
+        # 三支决策规则（二分类模型）- 按顺序执行
+        # 人脸作为公共特征，计入场景特征匹配
+        class_features_map = {
+            '晨读': ['人脸', '蓝色桌子', '教室', '投影幕布'],  # 4个特征
+            '晨跑': ['人脸', '跑道', '天空', '绿地', '树木', '旗杆', '号码布', '主席台']  # 8个特征
+        }
+        class_features = class_features_map.get(pred_label, [])
+        matched_features = [f for f in feature_names if feature_sims.get(f, 0) > FEATURE_THRESHOLD and f in class_features]
+        matched_count = len(matched_features)
+        
+        # 规则1: 如果是晨跑且置信度>=83%且相关特征数>=5 → 直接通过
+        if pred_label == '晨跑' and confidence >= ALPHA_AUTO_PASS and matched_count >= RUN_FEATURE_THRESH:
             decision = '自动通过'
-        elif confidence <= ALPHA_REJECT:
-            decision = '自动拒绝'
-        else:
+        # 规则2: 如果是晨读且置信度>=83%且相关特征数量>=3 → 直接通过
+        elif pred_label == '晨读' and confidence >= ALPHA_AUTO_PASS and matched_count >= READ_FEATURE_THRESH:
+            decision = '自动通过'
+        # 规则3: 如果特征数<3 → 待审核
+        elif matched_count < MIN_FEATURES:
             decision = '待审核'
+        # 规则4: 如果置信度<88 → 待审核
+        elif confidence < ALPHA_ACCEPT:
+            decision = '待审核'
+        # 默认: 自动通过
+        else:
+            decision = '自动通过'
 
-        return label, confidence, decision, high_sim_count, feature_sims
+        return pred_label, confidence, decision, high_sim_count, feature_sims
 
     def select_folder(self):
         folder = filedialog.askdirectory(title="选择数据包文件夹")
@@ -320,20 +359,35 @@ class MLPCheckInSystem:
         self.status_label.config(text=f"预测完成 | 自动通过: {auto_pass} | 待审核: {review_count}")
 
     def start_review(self):
-        # 直接打开审核窗口，让用户在下拉框里筛选
         if not self.review_queue:
             messagebox.showinfo("提示", "没有需要审核的图片!")
             return
-        ReviewWindow(self.current_data_dir, self.review_queue, self.results, self.scores, self.root)
+        ReviewWindow(self.current_data_dir, self.review_queue, self.results, self.scores, self.root, self)
 
     def generate_report(self):
         if not self.results:
             messagebox.showwarning("提示", "请先运行预测!")
             return
 
-        total = sum(len(v) for v in self.results.values())
-        auto_count = len(self.results['晨读']) + len(self.results['晨跑'])
+        # 计算本次检测的实际统计数据
+        total = len(self.results['晨读']) + len(self.results['晨跑']) + len(self.results['异常'])
         review_count = len(self.results['待审核'])
+
+        # 计算置信度统计
+        confidences = [s['confidence'] for s in self.scores.values()]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+
+        # 计算审核统计
+        if self.total_reviews > 0:
+            error_rate = self.corrected_count / self.total_reviews
+            model_accuracy = (self.total_reviews - self.corrected_count) / self.total_reviews
+        else:
+            error_rate = 0
+            model_accuracy = 0
+
+        # 总体准确率估算：自动通过的准确率 + 待审核确认的正确数
+        auto_pass = total - review_count
+        estimated_accuracy = (auto_pass * model_accuracy + self.review_confirmed) / total if total > 0 else 0
 
         report = {
             'summary': {
@@ -341,17 +395,30 @@ class MLPCheckInSystem:
                 '晨读': len(self.results['晨读']),
                 '晨跑': len(self.results['晨跑']),
                 '异常': len(self.results['异常']),
-                '待审核': len(self.results['待审核']),
-                'auto_pass_rate': f"{auto_count/total*100:.1f}%",
-                'review_rate': f"{review_count/total*100:.1f}%"
+                '待审核': review_count,
+                'auto_pass': auto_pass,
+                'review_rate': f"{review_count/total*100:.1f}%",
+            },
+            'review_statistics': {
+                'total_reviewed': self.total_reviews,
+                'auto_pass_errors': self.corrected_count,  # 自动通过中的错误
+                'review_confirmed': self.review_confirmed,  # 待审核确认
+                'error_rate': f"{error_rate:.1f}%",
+                'model_accuracy': f"{model_accuracy:.1f}%",
+            },
+            'confidence_statistics': {
+                'avg': f"{avg_confidence:.2%}",
+                'min': f"{min(confidences):.2%}" if confidences else "N/A",
+                'max': f"{max(confidences):.2%}" if confidences else "N/A",
             },
             'parameters': {
+                'temperature': TEMPERATURE,
                 'alpha_accept': ALPHA_ACCEPT,
-                'alpha_reject': ALPHA_REJECT,
-                'model': 'MLP+CLIP',
-                'accuracy': '99.95%'
+                'feature_threshold': FEATURE_THRESHOLD,
+                'min_features': MIN_FEATURES,
+                'model': '二分类MLP+CLIP'
             },
-            'review_list': self.results['待审核'],
+            'corrections': self.review_corrections,
             'scores': self.scores
         }
 
@@ -360,19 +427,27 @@ class MLPCheckInSystem:
         with open(report_file, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
+        # 显示审核统计
+        self.info_text.insert(tk.END, f"\n审核统计:\n")
+        self.info_text.insert(tk.END, f"  已审核: {self.total_reviews} 张\n")
+        self.info_text.insert(tk.END, f"  自动通过错误: {self.corrected_count} 张\n")
+        self.info_text.insert(tk.END, f"  待审核确认: {self.review_confirmed} 张\n")
+        self.info_text.insert(tk.END, f"  模型错误率: {error_rate:.1f}%\n")
+        self.info_text.insert(tk.END, f"  总体准确率: {estimated_accuracy*100:.1f}%\n")
         self.info_text.insert(tk.END, f"\n报告已保存: {report_file}\n")
-        self.status_label.config(text=f"报告已生成 | {os.path.basename(report_file)}")
+        self.status_label.config(text=f"报告已生成 | 准确率: {estimated_accuracy*100:.1f}%")
 
 
 class ReviewWindow:
-    def __init__(self, data_dir, review_queue, results_dict, scores, parent_root):
+    def __init__(self, data_dir, review_queue, results_dict, scores, parent_root, parent_system):
         self.data_dir = data_dir
         self.review_queue = review_queue
-        self.all_results = results_dict  # 所有分类结果
+        self.all_results = results_dict
         self.results = results_dict
         self.scores = scores
+        self.parent_system = parent_system  # 父窗口引用，用于统计纠正
         self.current_idx = 0
-        self.current_filter = '全部'  # 当前筛选
+        self.current_filter = '全部'
 
         self.win = tk.Toplevel(parent_root)
         self.win.title("人工审核")
@@ -404,10 +479,11 @@ class ReviewWindow:
         self.score_label.pack(pady=5)
 
         canvas_frame = tk.Frame(self.win, bg='#1a5f7a', padx=3, pady=3)
-        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        canvas_frame.pack(fill=tk.X, padx=20, pady=10)
+        canvas_frame.config(height=600)  # 固定高度
 
-        self.canvas = tk.Canvas(canvas_frame, bg='#ffffff', highlightthickness=2, relief=tk.SUNKEN)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas = tk.Canvas(canvas_frame, bg='#ffffff', highlightthickness=2, relief=tk.SUNKEN, width=700, height=600)
+        self.canvas.pack()
 
         btn_frame = tk.Frame(self.win, bg='#e8f4f8')
         btn_frame.pack(fill=tk.X, padx=20, pady=10)
@@ -481,13 +557,28 @@ class ReviewWindow:
             s = self.scores[fn]
             info_text = f"MLP预测: {s['label']} | 置信度: {s['confidence']:.2%} | 决策: {s['decision']}"
 
-            # 特征相似度(可解释性)
+            # 特征相似度(可解释性) - 只显示主标签下的特征
             if 'feature_sims' in s:
                 sims = s['feature_sims']
-                sorted_sims = sorted(sims.items(), key=lambda x: -x[1])
-                info_text += "\n特征相似度:"
-                for k, v in sorted_sims[:4]:
-                    info_text += f" {k.split(' of ')[-1]}:{v:.2f}"
+                
+                # 定义各标签对应的特征
+                label_features = {
+                    '晨读': ['人脸', '蓝色桌子', '教室', '投影幕布'],
+                    '晨跑': ['人脸', '跑道', '天空', '绿地', '树木', '旗杆', '号码布', '主席台'],
+                    '异常': ['人脸', '蓝色桌子', '教室', '投影幕布', '跑道', '天空', '绿地', '树木', '旗杆', '号码布', '主席台']
+                }
+                
+                # 获取当前标签对应的特征列表
+                current_features = label_features.get(s['label'], list(sims.keys()))
+                
+                # 只显示当前标签相关的特征
+                filtered_sims = {k: v for k, v in sims.items() if k in current_features}
+                sorted_sims = sorted(filtered_sims.items(), key=lambda x: -x[1])
+                
+                info_text += "\n特征预测:"
+                for k, v in sorted_sims:
+                    if v > FEATURE_THRESHOLD:
+                        info_text += f" {k}:{v:.2f}"
 
             self.score_label.config(text=info_text, font=('Consolas', 9))
 
@@ -495,20 +586,23 @@ class ReviewWindow:
 
         img = Image.open(os.path.join(self.data_dir, fn))
         w, h = img.size
-        max_size = 700
-        if w > max_size or h > max_size:
-            ratio = min(max_size/w, max_size/h)
-            img = img.resize((int(w*ratio), int(h*ratio)))
+        canvas_w, canvas_h = 700, 600
+        # 适应画布：等比例缩放
+        scale = min(canvas_w / w, canvas_h / h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
         self.photo = ImageTk.PhotoImage(img)
         self.canvas.delete('all')
-        self.canvas.config(width=img.width, height=img.height)
+        self.canvas.config(width=new_w, height=new_h)
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
 
     def set_label(self, label):
         if self.current_idx >= len(self.review_queue):
             return
         fn = self.review_queue[self.current_idx]
+        original_label = self.scores[fn]['label']  # 模型原始预测
+        original_decision = self.scores[fn]['decision']  # 原始决策
 
         # 从待审核移除，加入对应分类
         if fn in self.results['待审核']:
@@ -520,6 +614,22 @@ class ReviewWindow:
                 self.results[cat].remove(fn)
 
         self.results[label].append(fn)
+
+        # 记录纠正行为
+        self.parent_system.total_reviews += 1
+        
+        # 判断是否需要纠正（只有自动通过后被纠正才算真正的模型错误）
+        if original_decision == '自动通过' and label != original_label:
+            # 自动通过但被纠正 = 真正的模型错误
+            self.parent_system.corrected_count += 1
+            self.parent_system.review_corrections[fn] = {
+                'original': original_label,
+                'corrected': label,
+                'type': 'auto_pass_error'  # 自动通过错误
+            }
+        else:
+            # 待审核确认或纠正 = 不是模型错误
+            self.parent_system.review_confirmed += 1
 
         self.current_idx += 1
         self.show_image()

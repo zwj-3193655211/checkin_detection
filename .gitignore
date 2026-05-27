@@ -22,6 +22,11 @@ src/*/__pycache__/
 .claude/
 .vscode/
 
+# 大文件
+*.pt
+*.pth
+*.csv
+
 # 临时文件
 *.tmp
 *.log
