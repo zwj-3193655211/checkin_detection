@@ -23,6 +23,17 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from src.models.mlp import MLPClassifier
 from src.models.mlp_features_optimized import MLPFeaturesOptimized, ConfidenceRegularizedLoss
+from src.config import (
+    CLASSIFIER_TEMPERATURE as TEMPERATURE,
+    FEATURE_TEMPERATURE,
+    FEATURE_THRESHOLD_READ,
+    FEATURE_THRESHOLD_RUN,
+    ALPHA_AUTO_PASS,
+    ALPHA_REVIEW,
+    MIN_FEATURES,
+    RUN_FEATURE_THRESH,
+    READ_FEATURE_THRESH,
+)
 
 torch.manual_seed(42)
 np.random.seed(42)
@@ -38,13 +49,12 @@ CLASS_FEATURES = {
     '晨跑': ['人脸', '跑道', '天空', '绿地', '树木', '旗杆', '号码布', '主席台']
 }
 
-TEMPERATURE = 5.0
-ALPHA_ACCEPT = 0.85    # 优化后
-ALPHA_AUTO_PASS = 0.85 # 优化后
-FEATURE_THRESHOLD = 0.60 # 优化后
-MIN_FEATURES = 3
-RUN_FEATURE_THRESH = 5
-READ_FEATURE_THRESH = 3
+# ====== 参数已统一从 src/config.py 导入，修改 config.py 即可全局生效 ======
+
+
+def _get_feature_threshold(idx):
+    """获取特征阈值：晨读特征(idx 0-3)用0.66，晨跑特征(idx 4-10)用0.60"""
+    return FEATURE_THRESHOLD_READ if idx < 4 else FEATURE_THRESHOLD_RUN
 
 
 def validate_with_three_way_decision(classifier, features_model, X_val, y_main_val, y_features_val, epoch=0, is_final=False):
@@ -70,6 +80,7 @@ def validate_with_three_way_decision(classifier, features_model, X_val, y_main_v
     rule4_count = 0
     review_count = 0
     miss_count = 0
+    review_normal = 0  # 待审核的正常样本数
     detail_results = []
 
     for i in range(len(X_val)):
@@ -79,13 +90,13 @@ def validate_with_three_way_decision(classifier, features_model, X_val, y_main_v
 
         class_feats = CLASS_FEATURES[pred_label]
         matched = [f for f, fidx in FEATURE_INDEX.items()
-                   if feat_probs[i, fidx].item() > FEATURE_THRESHOLD and f in class_feats]
+                   if feat_probs[i, fidx].item() > _get_feature_threshold(fidx) and f in class_feats]
         matched_count = len(matched)
 
         r1 = pred_label == '晨跑' and confidence >= ALPHA_AUTO_PASS and matched_count >= RUN_FEATURE_THRESH
         r2 = pred_label == '晨读' and confidence >= ALPHA_AUTO_PASS and matched_count >= READ_FEATURE_THRESH
         r3 = matched_count < MIN_FEATURES
-        r4 = confidence < ALPHA_ACCEPT
+        r4 = confidence < ALPHA_REVIEW
 
         if r1:
             decision = 0
@@ -109,6 +120,8 @@ def validate_with_three_way_decision(classifier, features_model, X_val, y_main_v
             miss_count += 1
         if is_review:
             review_count += 1
+            if not is_anomaly:
+                review_normal += 1
 
         detail_results.append({
             'pred': pred_label,
@@ -120,16 +133,16 @@ def validate_with_three_way_decision(classifier, features_model, X_val, y_main_v
             'is_review': is_review
         })
 
-    miss_rate = miss_rate_val = miss_count / anomaly_total * 100 if anomaly_total > 0 else 0
+    miss_rate = miss_count / anomaly_total * 100 if anomaly_total > 0 else 0
     review_rate = review_count / len(X_val) * 100
-    normal_pass = normal_total - rule1_count - rule2_count
-    normal_pass_rate = normal_pass / normal_total * 100 if normal_total > 0 else 0
+    normal_pass = normal_total - review_normal
+    normal_pass_rate = normal_pass / len(X_val) * 100 if len(X_val) > 0 else 0
 
     if is_final or (epoch % 10 == 0 and epoch > 0):
         print(f"\n  [三支决策验证]")
         print(f"    漏检率: {miss_rate:.2f}% (漏检{miss_count}/{anomaly_total})")
         print(f"    审核率: {review_rate:.2f}% (待审核{review_count}/{len(X_val)})")
-        print(f"    正常通过率: {normal_pass_rate:.2f}% (通过{normal_pass}/{normal_total})")
+        print(f"    自动通过率: {normal_pass_rate:.2f}% (通过{normal_pass}/{len(X_val)})")
         print(f"    规则触发: 规则1={rule1_count}, 规则2={rule2_count}, 规则3={rule3_count}, 规则4={rule4_count}")
 
     return {
@@ -329,7 +342,7 @@ def train_features(X_train, y_train, X_val, y_val, y_main_val, classifier, outpu
         hidden_dim=512,
         output_dim=11,
         dropout=0.25,
-        temperature=1.8
+        temperature=FEATURE_TEMPERATURE
     )
     print(f"\n模型结构:\n{model}")
 
@@ -459,7 +472,7 @@ def evaluate_model(classifier, features_model, X_test, y_main_test, y_features_t
     print(f"    规则1: 晨跑 且 置信度 >= {ALPHA_AUTO_PASS} 且 特征数 >= {RUN_FEATURE_THRESH} → 自动通过")
     print(f"    规则2: 晨读 且 置信度 >= {ALPHA_AUTO_PASS} 且 特征数 >= {READ_FEATURE_THRESH} → 自动通过")
     print(f"    规则3: 特征数 < {MIN_FEATURES} → 待审核")
-    print(f"    规则4: 置信度 < {ALPHA_ACCEPT} → 待审核")
+    print(f"    规则4: 置信度 < {ALPHA_REVIEW} → 待审核")
 
 
 def main():

@@ -5,6 +5,20 @@ import pandas as pd
 from pathlib import Path
 from src.models.mlp import MLPClassifier
 from src.models.mlp_features_optimized import MLPFeaturesOptimized
+from src.config import (
+    CLASSIFIER_TEMPERATURE,
+    FEATURE_TEMPERATURE,
+    FEATURE_THRESHOLD_READ,
+    FEATURE_THRESHOLD_RUN,
+    ALPHA_AUTO_PASS,
+    ALPHA_REVIEW,
+    MIN_FEATURES,
+    RUN_FEATURE_THRESH,
+    READ_FEATURE_THRESH,
+)
+
+# 兼容性别名
+FEATURE_THRESHOLD = FEATURE_THRESHOLD_READ  # 回退用晨读阈值
 
 project_root = Path(__file__).parent
 
@@ -38,7 +52,7 @@ classifier = MLPClassifier(input_dim=512, hidden_dim=256, output_dim=2)
 classifier.load_state_dict(torch.load(project_root / 'data' / 'mlp_classifier.pt'))
 classifier.eval()
 
-features_model = MLPFeaturesOptimized(input_dim=512, hidden_dim=512, output_dim=11)
+features_model = MLPFeaturesOptimized(input_dim=512, hidden_dim=512, output_dim=11, temperature=FEATURE_TEMPERATURE)
 features_model.load_state_dict(torch.load(project_root / 'data' / 'mlp_features_optimized.pt'))
 features_model.eval()
 
@@ -72,14 +86,8 @@ with torch.no_grad():
 
 feat_probs[:, 9] = torch.clamp(feat_probs[:, 9] * 2, max=1.0)
 
-TEMPERATURE = 5.0
-ALPHA_ACCEPT = 0.85
-ALPHA_AUTO_PASS = 0.85
-FEATURE_THRESHOLD = 0.60
-MIN_FEATURES = 3
-RUN_FEATURE_THRESH = 5
-READ_FEATURE_THRESH = 3
-
+# 兼容性别名
+TEMPERATURE = CLASSIFIER_TEMPERATURE
 scaled_probs = torch.softmax(logits / TEMPERATURE, dim=1)
 scaled_confs = scaled_probs.max(dim=1)[0]
 scaled_preds = scaled_probs.argmax(dim=1)
@@ -99,14 +107,14 @@ for idx, i in enumerate(eval_indices):
 
     class_feats = CLASS_FEATURES[pred_label]
     matched = [f for f, fidx in FEATURE_INDEX.items()
-               if feat_probs[idx, fidx].item() > FEATURE_THRESHOLD and f in class_feats]
+               if feat_probs[idx, fidx].item() > (FEATURE_THRESHOLD_READ if fidx < 4 else FEATURE_THRESHOLD_RUN) and f in class_feats]
     matched_count = len(matched)
 
     # 规则条件判断（按顺序执行）
     r1 = pred_label == '晨跑' and confidence >= ALPHA_AUTO_PASS and matched_count >= RUN_FEATURE_THRESH
     r2 = pred_label == '晨读' and confidence >= ALPHA_AUTO_PASS and matched_count >= READ_FEATURE_THRESH
     r3 = matched_count < MIN_FEATURES
-    r4 = confidence < ALPHA_ACCEPT
+    r4 = confidence < ALPHA_REVIEW
 
     triggered_rule = None
     if r1:
@@ -147,8 +155,10 @@ miss_count = miss_mask.sum().item()
 miss_rate = miss_count / anomaly_total * 100 if anomaly_total > 0 else 0
 review_count = sum(decisions.tolist())
 review_rate = review_count / len(X_eval) * 100
-normal_pass = normal_total - rule1_count - rule2_count
-normal_pass_rate = normal_pass / normal_total * 100 if normal_total > 0 else 0
+# 正常通过 = 正常总数 - 待审核的正常样本
+review_normal = review_count - miss_count
+normal_pass = normal_total - review_normal
+normal_pass_rate = normal_pass / len(X_eval) * 100 if len(X_eval) > 0 else 0
 
 print("=" * 70)
 print("【规则有效性验证报告】")
@@ -158,14 +168,13 @@ print(f"\n【规则说明】")
 print(f"  规则1: 晨跑 且 置信度 >= {ALPHA_AUTO_PASS} 且 特征数 >= {RUN_FEATURE_THRESH} → 自动通过")
 print(f"  规则2: 晨读 且 置信度 >= {ALPHA_AUTO_PASS} 且 特征数 >= {READ_FEATURE_THRESH} → 自动通过")
 print(f"  规则3: 特征数 < {MIN_FEATURES} → 待审核")
-print(f"  规则4: 置信度 < {ALPHA_ACCEPT} → 待审核")
+print(f"  规则4: 置信度 < {ALPHA_REVIEW} → 待审核")
 
 print(f"\n【核心指标】")
 print(f"  总样本数: {len(X_eval)}")
 print(f"  正常样本: {normal_total} | 异常样本: {anomaly_total}")
 print(f"  漏检率: {miss_rate:.2f}% (漏检{miss_count}/{anomaly_total})")
 print(f"  审核率: {review_rate:.2f}% (待审核{review_count}/{len(X_eval)})")
-print(f"  正常通过率: {normal_pass_rate:.2f}% (通过{normal_pass}/{normal_total})")
 
 print(f"\n【规则触发统计】")
 print(f"  规则1(晨跑快速通过): {rule1_count}张")
