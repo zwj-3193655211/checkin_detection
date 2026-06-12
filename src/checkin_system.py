@@ -28,15 +28,25 @@ FEATURE_INDEX = {
     "晨跑_主席台": 10,
 }
 
-# ==================== 参数 ====================
-# 三支决策阈值（Temperature Scaling + 四规则过滤）
-TEMPERATURE = 5.0        # 温度缩放参数，让置信度分布更合理
-ALPHA_ACCEPT = 0.85       # 置信度阈值：低于此值进入待审核（优化后）
-ALPHA_AUTO_PASS = 0.85    # 自动通过最低置信度要求（优化后）
-FEATURE_THRESHOLD = 0.60   # 特征预测阈值：高于此值才算检测到该特征（优化后）
-MIN_FEATURES = 3          # 最少特征数：低于此值进入待审核（包含人脸）
-RUN_FEATURE_THRESH = 5    # 晨跑自动通过特征数阈值
-READ_FEATURE_THRESH = 3   # 晨读自动通过特征数阈值
+# ==================== 参数（从 config.py 统一导入）====================
+# 所有阈值集中管理，修改 src/config.py 即可全局生效
+from config import (
+    CLASSIFIER_TEMPERATURE,
+    FEATURE_TEMPERATURE,
+    FEATURE_THRESHOLD_READ,
+    FEATURE_THRESHOLD_RUN,
+    ALPHA_AUTO_PASS,
+    ALPHA_REVIEW,
+    MIN_FEATURES,
+    RUN_FEATURE_THRESH,
+    READ_FEATURE_THRESH,
+)
+# 兼容旧变量名（代码中大量使用 TEMPERATURE）
+TEMPERATURE = CLASSIFIER_TEMPERATURE
+
+# per-feature 阈值 helper（索引0-3晨读用0.66，4-10晨跑用0.60）
+def _get_feature_threshold(idx: int) -> float:
+    return FEATURE_THRESHOLD_READ if idx < 4 else FEATURE_THRESHOLD_RUN
 
 # CLIP文本提示词（用于特征相似度计算）
 # 与feature_label_tool.py保持一致
@@ -82,8 +92,8 @@ class MLPCheckInSystem:
         self.mlp_classifier.eval()
         print("  - mlp_classifier.pt 已加载（二分类模型）")
         
-        # 特征预测器
-        self.mlp_features = MLPFeaturesOptimized(input_dim=512, hidden_dim=512, output_dim=11, dropout=0.3)
+        # 特征预测器（温度参数来自 config.py → 改温度不需重训练）
+        self.mlp_features = MLPFeaturesOptimized(input_dim=512, hidden_dim=512, output_dim=11, dropout=0.3, temperature=FEATURE_TEMPERATURE)
         self.mlp_features.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_features_optimized.pt')))
         self.mlp_features.eval()
         print("  - mlp_features.pt 已加载")
@@ -167,7 +177,7 @@ class MLPCheckInSystem:
                                    bg='#e8f4f8', fg='#1a5f7a', padx=15, pady=10)
         param_frame.pack(fill=tk.X, pady=(0, 20))
 
-        params_text = f"二分类MLP | 置信度≥{ALPHA_ACCEPT} | 最小特征数≥{MIN_FEATURES}"
+        params_text = f"二分类MLP | 自动通过≥{ALPHA_AUTO_PASS} | 待审核<{ALPHA_REVIEW} | 特征≥{MIN_FEATURES}"
         tk.Label(param_frame, text=params_text, font=('Consolas', 10), bg='#e8f4f8', fg='#666').pack()
 
         # 结果显示
@@ -251,8 +261,8 @@ class MLPCheckInSystem:
         feature_names = ["人脸", "蓝色桌子", "教室", "投影幕布", "跑道", "天空", "绿地", "树木", "旗杆", "号码布", "主席台"]
         feature_sims = {name: float(feature_probs[i]) for i, name in enumerate(feature_names)}
 
-        # 统计高概率特征数(用于可解释性)
-        high_sim_count = sum(1 for p in feature_probs if p > FEATURE_THRESHOLD)
+        # 统计高概率特征数（per-feature阈值：晨读0.66，晨跑0.60）
+        high_sim_count = sum(1 for i, p in enumerate(feature_probs) if p > _get_feature_threshold(i))
 
         # 三支决策规则（二分类模型）- 按顺序执行
         # 人脸作为公共特征，计入场景特征匹配
@@ -261,20 +271,20 @@ class MLPCheckInSystem:
             '晨跑': ['人脸', '跑道', '天空', '绿地', '树木', '旗杆', '号码布', '主席台']  # 8个特征
         }
         class_features = class_features_map.get(pred_label, [])
-        matched_features = [f for f in feature_names if feature_sims.get(f, 0) > FEATURE_THRESHOLD and f in class_features]
+        matched_features = [f for i, f in enumerate(feature_names) if feature_sims.get(f, 0) > _get_feature_threshold(i) and f in class_features]
         matched_count = len(matched_features)
         
-        # 规则1: 如果是晨跑且置信度>=83%且相关特征数>=5 → 直接通过
+        # 规则1: 晨跑 且 置信度>=0.70 且 特征数>=5 → 自动通过
         if pred_label == '晨跑' and confidence >= ALPHA_AUTO_PASS and matched_count >= RUN_FEATURE_THRESH:
             decision = '自动通过'
-        # 规则2: 如果是晨读且置信度>=83%且相关特征数量>=3 → 直接通过
+        # 规则2: 晨读 且 置信度>=0.70 且 特征数>=3 → 自动通过
         elif pred_label == '晨读' and confidence >= ALPHA_AUTO_PASS and matched_count >= READ_FEATURE_THRESH:
             decision = '自动通过'
-        # 规则3: 如果特征数<3 → 待审核
+        # 规则3: 特征数<3 → 待审核
         elif matched_count < MIN_FEATURES:
             decision = '待审核'
-        # 规则4: 如果置信度<88 → 待审核
-        elif confidence < ALPHA_ACCEPT:
+        # 规则4: 置信度<0.85 → 待审核
+        elif confidence < ALPHA_REVIEW:
             decision = '待审核'
         # 默认: 自动通过
         else:
@@ -413,8 +423,9 @@ class MLPCheckInSystem:
             },
             'parameters': {
                 'temperature': TEMPERATURE,
-                'alpha_accept': ALPHA_ACCEPT,
-                'feature_threshold': FEATURE_THRESHOLD,
+                'alpha_auto_pass': ALPHA_AUTO_PASS,
+                'alpha_review': ALPHA_REVIEW,
+                'feature_threshold': f'晨读{FEATURE_THRESHOLD_READ}/晨跑{FEATURE_THRESHOLD_RUN}',
                 'min_features': MIN_FEATURES,
                 'model': '二分类MLP+CLIP'
             },
@@ -561,6 +572,9 @@ class ReviewWindow:
             if 'feature_sims' in s:
                 sims = s['feature_sims']
                 
+                # 定义特征名称列表
+                feature_names = ["人脸", "蓝色桌子", "教室", "投影幕布", "跑道", "天空", "绿地", "树木", "旗杆", "号码布", "主席台"]
+                
                 # 定义各标签对应的特征
                 label_features = {
                     '晨读': ['人脸', '蓝色桌子', '教室', '投影幕布'],
@@ -577,7 +591,8 @@ class ReviewWindow:
                 
                 info_text += "\n特征预测:"
                 for k, v in sorted_sims:
-                    if v > FEATURE_THRESHOLD:
+                    fidx = feature_names.index(k) if k in feature_names else -1
+                    if v > (_get_feature_threshold(fidx) if fidx >= 0 else FEATURE_THRESHOLD_RUN):
                         info_text += f" {k}:{v:.2f}"
 
             self.score_label.config(text=info_text, font=('Consolas', 9))
