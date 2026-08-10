@@ -26705,11 +26705,171 @@
         "号码布": false,
         "主席台": false
       }
+    },
+    "1-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:39:48",
+      "features": {
+        "人脸": true,
+        "跑道": false,
+        "天空": true,
+        "绿地": true,
+        "树木": true,
+        "旗杆": false,
+        "号码布": true,
+        "主席台": false
+      }
+    },
+    "101-2026-04-30.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:39:57",
+      "features": {
+        "人脸": true,
+        "跑道": false,
+        "天空": true,
+        "绿地": true,
+        "树木": true,
+        "旗杆": false,
+        "号码布": true,
+        "主席台": false
+      }
+    },
+    "119-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:40:08",
+      "features": {
+        "人脸": true,
+        "跑道": true,
+        "天空": true,
+        "绿地": false,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": true
+      }
+    },
+    "138-2026-04-27.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:40:17",
+      "features": {
+        "人脸": true,
+        "跑道": false,
+        "天空": true,
+        "绿地": false,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": true
+      }
+    },
+    "164-2026-04-27.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:40:29",
+      "features": {
+        "人脸": true,
+        "跑道": true,
+        "天空": false,
+        "绿地": true,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": true
+      }
+    },
+    "5-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:40:37",
+      "features": {
+        "人脸": true,
+        "跑道": false,
+        "天空": true,
+        "绿地": false,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": false
+      }
+    },
+    "6-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:40:43",
+      "features": {
+        "人脸": true,
+        "跑道": false,
+        "天空": true,
+        "绿地": false,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": false
+      }
+    },
+    "7-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:40:52",
+      "features": {
+        "人脸": true,
+        "跑道": false,
+        "天空": true,
+        "绿地": false,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": true
+      }
+    },
+    "81-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:41:09",
+      "features": {
+        "人脸": true,
+        "跑道": true,
+        "天空": true,
+        "绿地": false,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": true
+      }
+    },
+    "82-2026-04-28.jpeg": {
+      "label": "晨跑",
+      "scene": "morning_running",
+      "is_normal": "normal",
+      "timestamp": "2026-08-10 15:41:21",
+      "features": {
+        "人脸": true,
+        "跑道": true,
+        "天空": true,
+        "绿地": true,
+        "树木": true,
+        "旗杆": true,
+        "号码布": true,
+        "主席台": true
+      }
     }
   },
   "metadata": {
-    "updated": "2026-06-11 16:44:56",
-    "total_images": 24,
-    "labeled_count": 2057
+    "updated": "2026-08-10 15:41:21",
+    "total_images": 10,
+    "labeled_count": 2067
   }
 }

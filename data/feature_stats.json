@@ -1,99 +1,99 @@
 {
-  "total_images": 2057,
+  "total_images": 2067,
   "label_distribution": {
     "晨读": {
       "count": 1497,
-      "percentage": 72.77588721438988
+      "percentage": 72.42380261248186
     },
     "晨跑": {
-      "count": 536,
-      "percentage": 26.05736509479825
+      "count": 546,
+      "percentage": 26.41509433962264
     },
     "异常": {
       "count": 24,
-      "percentage": 1.166747690811862
+      "percentage": 1.1611030478955007
     }
   },
   "scene_distribution": {
     "morning_reading": {
       "count": 1497,
-      "percentage": 72.77588721438988
+      "percentage": 72.42380261248186
     },
     "morning_running": {
-      "count": 535,
-      "percentage": 26.00875060768109
+      "count": 545,
+      "percentage": 26.366715045960333
     },
     "abnormal": {
       "count": 25,
-      "percentage": 1.2153621779290227
+      "percentage": 1.209482341557813
     }
   },
   "feature_distribution": {
     "人脸": {
-      "true_count": 1842,
+      "true_count": 1852,
       "false_count": 191,
       "missing_count": 24,
-      "percentage": 89.54788526981041
+      "percentage": 89.5984518626028
     },
     "蓝色桌子": {
       "true_count": 1384,
       "false_count": 113,
-      "missing_count": 560,
-      "percentage": 67.28245017015071
+      "missing_count": 570,
+      "percentage": 66.95694242864055
     },
     "教室": {
       "true_count": 1490,
       "false_count": 7,
-      "missing_count": 560,
-      "percentage": 72.43558580456975
+      "missing_count": 570,
+      "percentage": 72.08514755684567
     },
     "投影幕布": {
       "true_count": 1477,
       "false_count": 20,
-      "missing_count": 560,
-      "percentage": 71.80359747204666
+      "missing_count": 570,
+      "percentage": 71.45621673923561
     },
     "跑道": {
-      "true_count": 337,
-      "false_count": 199,
+      "true_count": 341,
+      "false_count": 205,
       "missing_count": 1521,
-      "percentage": 16.383082158483226
+      "percentage": 16.497339138848574
     },
     "天空": {
-      "true_count": 429,
-      "false_count": 107,
+      "true_count": 438,
+      "false_count": 108,
       "missing_count": 1521,
-      "percentage": 20.855614973262032
+      "percentage": 21.190130624092888
     },
     "绿地": {
-      "true_count": 392,
-      "false_count": 144,
+      "true_count": 396,
+      "false_count": 150,
       "missing_count": 1521,
-      "percentage": 19.05687894992708
+      "percentage": 19.15820029027576
     },
     "树木": {
-      "true_count": 416,
+      "true_count": 426,
       "false_count": 120,
       "missing_count": 1521,
-      "percentage": 20.22362664073894
+      "percentage": 20.609579100145137
     },
     "旗杆": {
-      "true_count": 164,
-      "false_count": 371,
+      "true_count": 172,
+      "false_count": 373,
       "missing_count": 1522,
-      "percentage": 7.9727758872143895
+      "percentage": 8.321238509917755
     },
     "号码布": {
-      "true_count": 75,
+      "true_count": 85,
       "false_count": 460,
       "missing_count": 1522,
-      "percentage": 3.6460865337870683
+      "percentage": 4.112239961296565
     },
     "主席台": {
-      "true_count": 198,
-      "false_count": 337,
+      "true_count": 204,
+      "false_count": 341,
       "missing_count": 1522,
-      "percentage": 9.62566844919786
+      "percentage": 9.869375907111756
     }
   }
 }

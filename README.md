@@ -40,6 +40,9 @@ checkin_detection/
 │   └── feature_label_tool.py         # 图形化人工标注工具（tkinter GUI）
 ├── outputs/                          # 早期实验模型（ResNet18/50、CLIP分类器等，已废弃）
 ├── train_mlp.py                      # 统一训练脚本（双MLP）
+├── train_features_11mlp.py           # 11独立MLP特征预测器实验（已评估，不采用）
+├── compare_features.py               # 共享MLP vs 11独立MLP 对比评估
+├── tune_feature_thresholds.py        # 每特征独立阈值坐标下降搜索（实验）
 ├── tune_thresholds.py                # 阈值参数网格搜索优化
 ├── test_current.py                   # 当前配置规则验证脚本
 ├── environment.yml                   # Conda环境配置
@@ -112,10 +115,10 @@ python scripts/feature_label_tool.py
 
 | 类别 | 数量 | 比例 |
 |------|------|------|
-| 晨读 | 1491张 | 73.1% |
-| 晨跑 | 525张 | 25.7% |
+| 晨读 | 1497张 | 72.4% |
+| 晨跑 | 546张 | 26.4% |
 | 异常 | 24张 | 1.2% |
-| **总计** | **2040张** | **100%** |
+| **总计** | **2067张** | **100%** |
 
 ## 核心参数
 
@@ -159,4 +162,4 @@ READ_FEATURE_THRESH = 3     # 晨读快速通过特征数
 
 ## 更新日期
 
-2026-06-09
+2026-08-10（数据集扩至 2067 张并重新训练）
