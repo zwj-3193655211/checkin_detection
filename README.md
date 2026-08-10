@@ -105,8 +105,8 @@ python scripts/feature_label_tool.py
 
 | 规则 | 触发条件 | 决策 | 说明 |
 |------|---------|------|------|
-| 规则1 | 晨跑 且 置信度 >= 0.85 且 匹配特征 >= 5 | 自动通过 | 晨跑快速通过 |
-| 规则2 | 晨读 且 置信度 >= 0.85 且 匹配特征 >= 3 | 自动通过 | 晨读快速通过 |
+| 规则1 | 晨跑 且 置信度 >= 0.80 且 匹配特征 >= 5 | 自动通过 | 晨跑快速通过 |
+| 规则2 | 晨读 且 置信度 >= 0.80 且 匹配特征 >= 3 | 自动通过 | 晨读快速通过 |
 | 规则3 | 匹配特征 < 3 | 待审核 | 少特征拦截 |
 | 规则4 | 置信度 < 0.85 | 待审核 | 低置信拦截 |
 | 默认 | 以上均不满足 | 自动通过 | — |
@@ -123,10 +123,12 @@ python scripts/feature_label_tool.py
 ## 核心参数
 
 ```python
-TEMPERATURE = 5.0           # 温度缩放（平滑置信度分布，T↑ → 置信度更分散 → 异常更易被拦截）
-ALPHA_ACCEPT = 0.85         # 置信度阈值
-ALPHA_AUTO_PASS = 0.85      # 自动通过最低置信度
-FEATURE_THRESHOLD = 0.60    # 特征存在判定阈值
+CLASSIFIER_TEMPERATURE = 5.0  # 主分类器温度缩放（T↑ → 置信度更分散 → 异常更易被拦截）
+FEATURE_TEMPERATURE = 1.8     # 特征预测器温度缩放
+ALPHA_AUTO_PASS = 0.80        # 自动通过最低置信度（规则1/2）
+ALPHA_REVIEW = 0.85           # 待审核置信度阈值（规则4）
+FEATURE_THRESHOLD_READ = 0.66 # 晨读特征存在判定阈值
+FEATURE_THRESHOLD_RUN = 0.60   # 晨跑特征存在判定阈值
 MIN_FEATURES = 3            # 最少匹配特征数
 RUN_FEATURE_THRESH = 5      # 晨跑快速通过特征数
 READ_FEATURE_THRESH = 3     # 晨读快速通过特征数
