@@ -1,0 +1,99 @@
+{
+  "total_images": 2057,
+  "label_distribution": {
+    "晨读": {
+      "count": 1497,
+      "percentage": 72.77588721438988
+    },
+    "晨跑": {
+      "count": 536,
+      "percentage": 26.05736509479825
+    },
+    "异常": {
+      "count": 24,
+      "percentage": 1.166747690811862
+    }
+  },
+  "scene_distribution": {
+    "morning_reading": {
+      "count": 1497,
+      "percentage": 72.77588721438988
+    },
+    "morning_running": {
+      "count": 535,
+      "percentage": 26.00875060768109
+    },
+    "abnormal": {
+      "count": 25,
+      "percentage": 1.2153621779290227
+    }
+  },
+  "feature_distribution": {
+    "人脸": {
+      "true_count": 1842,
+      "false_count": 191,
+      "missing_count": 24,
+      "percentage": 89.54788526981041
+    },
+    "蓝色桌子": {
+      "true_count": 1384,
+      "false_count": 113,
+      "missing_count": 560,
+      "percentage": 67.28245017015071
+    },
+    "教室": {
+      "true_count": 1490,
+      "false_count": 7,
+      "missing_count": 560,
+      "percentage": 72.43558580456975
+    },
+    "投影幕布": {
+      "true_count": 1477,
+      "false_count": 20,
+      "missing_count": 560,
+      "percentage": 71.80359747204666
+    },
+    "跑道": {
+      "true_count": 337,
+      "false_count": 199,
+      "missing_count": 1521,
+      "percentage": 16.383082158483226
+    },
+    "天空": {
+      "true_count": 429,
+      "false_count": 107,
+      "missing_count": 1521,
+      "percentage": 20.855614973262032
+    },
+    "绿地": {
+      "true_count": 392,
+      "false_count": 144,
+      "missing_count": 1521,
+      "percentage": 19.05687894992708
+    },
+    "树木": {
+      "true_count": 416,
+      "false_count": 120,
+      "missing_count": 1521,
+      "percentage": 20.22362664073894
+    },
+    "旗杆": {
+      "true_count": 164,
+      "false_count": 371,
+      "missing_count": 1522,
+      "percentage": 7.9727758872143895
+    },
+    "号码布": {
+      "true_count": 75,
+      "false_count": 460,
+      "missing_count": 1522,
+      "percentage": 3.6460865337870683
+    },
+    "主席台": {
+      "true_count": 198,
+      "false_count": 337,
+      "missing_count": 1522,
+      "percentage": 9.62566844919786
+    }
+  }
+}

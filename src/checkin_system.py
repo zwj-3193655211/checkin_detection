@@ -1,31 +1,51 @@
-"""晨读晨练签到检测系统 - MLP增强版（保留老系统流程）"""
+"""
+晨读晨练签到检测系统 - MLP增强版（保留老系统流程）
+
+系统架构:
+- CLIP (ViT-B/32): 负责从图片中提取512维特征向量
+- MLPClassifier (二分类): 预测图片属于"晨读"还是"晨跑"
+- MLPFeaturesOptimized (特征预测): 预测图片中包含的11种视觉特征
+
+核心流程:
+1. 用户选择包含待检测图片的文件夹
+2. 系统对每张图片进行CLIP特征提取
+3. 双MLP模型进行预测，同时输出分类结果和特征预测
+4. 三支决策规则决定是自动通过还是人工审核
+5. 用户可对审核队列中的图片进行人工校正
+6. 生成最终的检测报告
+
+作者: AI Assistant
+"""
+
+# ==================== 第三方库 ====================
 import json
 import os
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from PIL import Image, ImageTk
+import tkinter as tk                      # Python标准GUI库
+from tkinter import ttk, messagebox, filedialog  # tkinter子模块
+from PIL import Image, ImageTk             # 图片处理和GUI图片对象
 import torch
-import clip
+import clip                                # OpenAI CLIP模型
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
 
-from models.mlp import MLPClassifier
-from models.mlp_features_optimized import MLPFeaturesOptimized
+# ==================== 项目内部导入 ====================
+from models.mlp import MLPClassifier               # 二分类器（晨读/晨跑）
+from models.mlp_features_optimized import MLPFeaturesOptimized  # 特征预测器（11维）
 
 # ==================== 特征索引定义（11维）====================
 FEATURE_INDEX = {
-    "人脸": 0,              # 公共特征
-    "晨读_蓝色桌子": 1,
-    "晨读_教室": 2,
-    "晨读_投影幕布": 3,
-    "晨跑_跑道": 4,
-    "晨跑_天空": 5,
-    "晨跑_绿地": 6,
-    "晨跑_树木": 7,
-    "晨跑_旗杆": 8,
-    "晨跑_号码布": 9,
-    "晨跑_主席台": 10,
+    "人脸": 0,              # 公共特征（晨读和晨跑都可能有）
+    "晨读_蓝色桌子": 1,      # 晨读专属特征
+    "晨读_教室": 2,          # 晨读专属特征
+    "晨读_投影幕布": 3,      # 晨读专属特征
+    "晨跑_跑道": 4,          # 晨跑专属特征
+    "晨跑_天空": 5,          # 晨跑专属特征
+    "晨跑_绿地": 6,          # 晨跑专属特征
+    "晨跑_树木": 7,          # 晨跑专属特征
+    "晨跑_旗杆": 8,          # 晨跑专属特征
+    "晨跑_号码布": 9,        # 晨跑专属特征（关键标识）
+    "晨跑_主席台": 10,       # 晨跑专属特征
 }
 
 # ==================== 参数（从 config.py 统一导入）====================
@@ -72,46 +92,82 @@ FEATURE_SIM_THRESHOLD = 0.20
 
 
 class MLPCheckInSystem:
+    """
+    晨读晨练签到检测系统主类
+    
+    该类负责:
+    - 加载和管理CLIP模型与双MLP模型
+    - 提供图形用户界面(GUI)
+    - 执行图片预测和三支决策
+    - 管理审核队列和校正逻辑
+    - 生成检测报告
+    
+    属性:
+        device: 计算设备('cuda'或'cpu')
+        clip_model: CLIP视觉编码器
+        mlp_classifier: 二分类MLP（晨读/晨跑）
+        mlp_features: 特征预测MLP（11维特征）
+        current_data_dir: 当前选择的数据目录
+        results: 分类结果字典{'晨读': [], '晨跑': [], '异常': [], '待审核': []}
+        scores: 每张图片的详细评分信息
+    """
+    
     def __init__(self):
+        """初始化系统：加载模型、设置路径、创建GUI"""
+        # ========== 设备选择 ==========
+        # 优先使用GPU（cuda），否则使用CPU
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # 加载CLIP（特征提取）
+        # ========== 加载CLIP模型 ==========
+        # CLIP负责将图片编码为512维特征向量
+        # ViT-B/32: Vision Transformer Base，patch大小32×32
         print("加载CLIP...")
         self.clip_model, self.preprocess = clip.load("ViT-B/32", device=self.device)
-        self.clip_model.eval()
+        self.clip_model.eval()  # 推理模式，禁用dropout
         print(f"CLIP已加载: {self.device}")
 
-        # 加载MLP（双MLP）
+        # ========== 加载MLP模型 ==========
+        # 系统使用双MLP架构：
+        # 1. mlp_classifier: 二分类模型，判断是晨读还是晨跑
+        # 2. mlp_features: 特征预测模型，预测11种视觉特征的存在概率
         print("加载MLP...")
         base = os.path.dirname(os.path.abspath(__file__))
         data_dir = os.path.join(os.path.dirname(base), 'data')
         
         # 主分类器 - 二分类模型（晨读/晨跑）
+        # 输入: 512维CLIP特征, 输出: 2维logits（晨读/晨跑）
         self.mlp_classifier = MLPClassifier(input_dim=512, hidden_dim=256, output_dim=2)
         self.mlp_classifier.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_classifier.pt')))
         self.mlp_classifier.eval()
         print("  - mlp_classifier.pt 已加载（二分类模型）")
         
-        # 特征预测器（温度参数来自 config.py → 改温度不需重训练）
-        self.mlp_features = MLPFeaturesOptimized(input_dim=512, hidden_dim=512, output_dim=11, dropout=0.3, temperature=FEATURE_TEMPERATURE)
+        # 特征预测器 - 11维特征预测（可解释性增强）
+        # 温度参数来自config.py，推理时使用温度缩放降低过度自信
+        self.mlp_features = MLPFeaturesOptimized(
+            input_dim=512, hidden_dim=512, output_dim=11, 
+            dropout=0.3, temperature=FEATURE_TEMPERATURE
+        )
         self.mlp_features.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_features_optimized.pt')))
         self.mlp_features.eval()
         print("  - mlp_features.pt 已加载")
         
+        # 标签映射：0->晨读，1->晨跑
         self.id2label = {0: '晨读', 1: '晨跑'}
 
-        # 注意：检测系统不需要加载标签文件，直接使用模型进行预测
+        # ========== 初始化状态变量 ==========
+        self.class_names = ['晨读', '晨跑']          # 类别名称列表
+        self.current_data_dir = None                 # 当前数据目录
+        self.results = {'晨读': [], '晨跑': [], '异常': [], '待审核': []}  # 分类结果
+        self.scores = {}                             # 每张图片的详细分数
+        self.review_queue = []                       # 待审核队列
+        
+        # 审核统计：记录用户纠正行为用于计算模型准确率
+        self.review_corrections = {}    # {filename: {'original': '晨读', 'corrected': '晨跑'}}
+        self.total_reviews = 0          # 已审核的图片总数
+        self.corrected_count = 0        # 自动通过中被纠正的数量（真正的模型错误）
+        self.review_confirmed = 0       # 待审核中确认原预测的数量
 
-        self.class_names = ['晨读', '晨跑']
-        self.current_data_dir = None
-        self.results = {'晨读': [], '晨跑': [], '异常': [], '待审核': []}
-        self.scores = {}
-        self.review_queue = []
-        self.review_corrections = {}  # 记录纠正行为: {filename: {'original': '晨读', 'corrected': '晨跑'}}
-        self.total_reviews = 0  # 已审核数量
-        self.corrected_count = 0  # 自动通过中被纠正的数量（真正的模型错误）
-        self.review_confirmed = 0  # 待审核中确认原预测的数量（不算错误）
-
+        # ========== 设置路径和GUI ==========
         self.setup_paths()
         self.setup_ui()
 
@@ -209,84 +265,133 @@ class MLPCheckInSystem:
         self.root.mainloop()
 
     def predict(self, image_path):
-        """双MLP预测"""
-        # CLIP特征提取
-        img = Image.open(image_path).convert('RGB')
-        img_input = self.preprocess(img).unsqueeze(0).to(self.device)
+        """
+        使用双MLP模型预测图片类别（简化版本，仅返回基本预测结果）
+        
+        Args:
+            image_path: 图片文件路径
+            
+        Returns:
+            tuple: (预测标签, 预测置信度)
+                - 预测标签: '晨读' 或 '晨跑'
+                - 置信度: 0~1之间的概率值
+        """
+        # ========== 1. CLIP特征提取 ==========
+        # 将图片加载并转换为CLIP输入格式
+        img = Image.open(image_path).convert('RGB')  # 确保是RGB格式
+        img_input = self.preprocess(img).unsqueeze(0).to(self.device)  # 添加batch维度
 
         with torch.no_grad():
+            # CLIP编码：图片 -> 512维特征向量
             image_features = self.clip_model.encode_image(img_input)
 
-        # MLP预测（双MLP）
+        # ========== 2. 双MLP预测 ==========
         with torch.no_grad():
-            # 主分类器
+            # 主分类器：判断晨读还是晨跑
             out = self.mlp_classifier(image_features.float())
-            probs = torch.softmax(out, dim=1)
-            pred_main = probs.argmax(dim=1).item()
-            confidence = probs[0][pred_main].item()
+            probs = torch.softmax(out, dim=1)  # 转为概率分布
+            pred_main = probs.argmax(dim=1).item()  # 取概率最大的类别
+            confidence = probs[0][pred_main].item()  # 获取该类的概率值
             pred_label = self.id2label.get(pred_main, '未知')
             
-            # 特征预测器
+            # 特征预测器：预测11维特征的存在概率
             out_features = self.mlp_features(image_features.float(), inference=True)
-            feature_probs = torch.sigmoid(out_features)[0].tolist()
+            feature_probs = torch.sigmoid(out_features)[0].tolist()  # Sigmoid转为0~1
 
         return pred_label, confidence
 
     def predict_with_decision(self, image_path):
-        """带三支决策的预测，同时计算特征得分(可解释性)"""
-        # CLIP特征提取
+        """
+        带三支决策的预测（完整版本）
+        
+        三支决策将预测结果分为三类：
+        1. 自动通过：模型有足够信心，可以直接放行
+        2. 待审核：模型信心不足，需要人工判断
+        3. 自动拒绝/标记异常：明确判定为异常情况
+        
+        Args:
+            image_path: 图片文件路径
+            
+        Returns:
+            tuple: (预测标签, 置信度, 决策, 高置信度特征数, 特征相似度字典)
+        """
+        # ========== 1. CLIP特征提取 ==========
         img = Image.open(image_path).convert('RGB')
         img_input = self.preprocess(img).unsqueeze(0).to(self.device)
 
         with torch.no_grad():
             image_features = self.clip_model.encode_image(img_input)
 
-        # 双MLP预测 + Temperature Scaling
+        # ========== 2. 双MLP预测 + Temperature Scaling ==========
+        # Temperature Scaling: 用温度参数除以logits，降低过度自信
+        # 温度>1会让概率分布更平滑，温度=1就是原始softmax
         with torch.no_grad():
-            # 主分类器
+            # 主分类器 + 温度缩放
             out = self.mlp_classifier(image_features.float())
             probs = torch.softmax(out / TEMPERATURE, dim=1)
             pred_main = probs.argmax(dim=1).item()
             confidence = probs[0][pred_main].item()
             pred_label = self.id2label.get(pred_main, '未知')
             
-            # 特征预测器
+            # 特征预测器（推理模式）
             out_features = self.mlp_features(image_features.float(), inference=True)
             feature_probs = torch.sigmoid(out_features)[0].tolist()
 
-        # 号码布单独增强（乘以2）
+        # ========== 3. 号码布单独增强 ==========
+        # 号码布是晨跑的关键标识，将其得分乘以2以提高检出率
+        # 但最高不超过0.95（留一点不确定性）
         feature_probs[9] = min(feature_probs[9] * 2, 1.0)
 
-        # MLP特征预测(可解释性)
-        feature_names = ["人脸", "蓝色桌子", "教室", "投影幕布", "跑道", "天空", "绿地", "树木", "旗杆", "号码布", "主席台"]
+        # ========== 4. 构建特征相似度字典（可解释性） ==========
+        # 用于向用户展示：模型看到了哪些特征
+        feature_names = ["人脸", "蓝色桌子", "教室", "投影幕布", "跑道", "天空", 
+                        "绿地", "树木", "旗杆", "号码布", "主席台"]
         feature_sims = {name: float(feature_probs[i]) for i, name in enumerate(feature_names)}
 
-        # 统计高概率特征数（per-feature阈值：晨读0.66，晨跑0.60）
-        high_sim_count = sum(1 for i, p in enumerate(feature_probs) if p > _get_feature_threshold(i))
+        # ========== 5. 统计高置信度特征数量 ==========
+        # 每个特征有独立阈值：晨读特征(idx 0-3)用0.66，晨跑特征(idx 4-10)用0.60
+        high_sim_count = sum(1 for i, p in enumerate(feature_probs) 
+                            if p > _get_feature_threshold(i))
 
-        # 三支决策规则（二分类模型）- 按顺序执行
-        # 人脸作为公共特征，计入场景特征匹配
+        # ========== 6. 三支决策规则 ==========
+        # 定义每个类别应该包含的特征（用于特征匹配）
         class_features_map = {
             '晨读': ['人脸', '蓝色桌子', '教室', '投影幕布'],  # 4个特征
             '晨跑': ['人脸', '跑道', '天空', '绿地', '树木', '旗杆', '号码布', '主席台']  # 8个特征
         }
         class_features = class_features_map.get(pred_label, [])
-        matched_features = [f for i, f in enumerate(feature_names) if feature_sims.get(f, 0) > _get_feature_threshold(i) and f in class_features]
+        
+        # 统计匹配上的特征数量（必须在对应类别的特征列表中，且置信度超过阈值）
+        matched_features = [f for i, f in enumerate(feature_names) 
+                           if feature_sims.get(f, 0) > _get_feature_threshold(i) 
+                           and f in class_features]
         matched_count = len(matched_features)
         
+        # ========== 三支决策规则（按优先级顺序） ==========
+        # 
         # 规则1: 晨跑 且 置信度>=0.70 且 特征数>=5 → 自动通过
+        # 理由：晨跑有8个可能特征，如果模型高置信度且匹配到5个以上，说明非常确定
+        #
+        # 规则2: 晨读 且 置信度>=0.70 且 特征数>=3 → 自动通过
+        # 理由：晨读有4个可能特征，匹配到3个加上高置信度可以放行
+        #
+        # 规则3: 特征数<3 → 待审核
+        # 理由：匹配特征太少，可能是图片质量差或场景不明确
+        #
+        # 规则4: 置信度<0.85 → 待审核
+        # 理由：模型自身信心不足，需要人工确认
+        #
+        # 默认: 自动通过
+        # 兜底规则：如果不满足上述任何条件但模型有基本信心，则放行
+        
         if pred_label == '晨跑' and confidence >= ALPHA_AUTO_PASS and matched_count >= RUN_FEATURE_THRESH:
             decision = '自动通过'
-        # 规则2: 晨读 且 置信度>=0.70 且 特征数>=3 → 自动通过
         elif pred_label == '晨读' and confidence >= ALPHA_AUTO_PASS and matched_count >= READ_FEATURE_THRESH:
             decision = '自动通过'
-        # 规则3: 特征数<3 → 待审核
         elif matched_count < MIN_FEATURES:
             decision = '待审核'
-        # 规则4: 置信度<0.85 → 待审核
         elif confidence < ALPHA_REVIEW:
             decision = '待审核'
-        # 默认: 自动通过
         else:
             decision = '自动通过'
 
@@ -351,7 +456,10 @@ class MLPCheckInSystem:
                 print(f"错误: {fn} - {e}")
 
         # 统计
-        auto_pass = len(self.results['晨读']) + len(self.results['晨跑'])
+        # self.results['晨读']/['晨跑'] 包含全部被分成该类的图片（含待审核的副本），
+        # self.results['待审核'] 是其中需要人工审核的那部分子集，所以不能直接相加。
+        review_set = set(self.results['待审核'])
+        auto_pass = (len(self.results['晨读']) + len(self.results['晨跑'])) - len(review_set)
         review_count = len(self.results['待审核'])
 
         self.info_text.insert(tk.END, f"\n{'='*60}\n")
@@ -450,16 +558,54 @@ class MLPCheckInSystem:
 
 
 class ReviewWindow:
+    """
+    人工审核窗口类
+    
+    该窗口允许用户：
+    - 查看待审核的图片及其MLP预测结果
+    - 通过键盘快捷键快速标注正确类别
+    - 实时查看特征相似度（可解释性）
+    - 根据筛选条件查看不同类别的结果
+    
+    快捷键说明：
+    - 1: 标记为晨读
+    - 2: 标记为晨跑
+    - 3: 标记为异常
+    - 0: 跳过（不改变分类）
+    - 左/右箭头: 上一张/下一张
+    
+    审核逻辑：
+    - 如果原始决策是"自动通过"但用户纠正了分类，则计为"模型错误"
+    - 如果原始决策是"待审核"用户确认或修改，不计为模型错误
+    """
+    
     def __init__(self, data_dir, review_queue, results_dict, scores, parent_root, parent_system):
+        """
+        初始化审核窗口
+        
+        Args:
+            data_dir: 图片所在目录
+            review_queue: 待审核图片队列
+            results_dict: 分类结果字典引用
+            scores: 每张图片的详细评分信息
+            parent_root: 父窗口引用
+            parent_system: 父系统引用（用于更新统计信息）
+        """
+        # 保存引用
         self.data_dir = data_dir
         self.review_queue = review_queue
         self.all_results = results_dict
         self.results = results_dict
         self.scores = scores
-        self.parent_system = parent_system  # 父窗口引用，用于统计纠正
-        self.current_idx = 0
-        self.current_filter = '全部'
+        self.parent_root = parent_root
+        self.parent_system = parent_system
+        
+        # 当前显示状态
+        self.current_idx = 0           # 当前图片索引
+        self.current_filter = '待审核'  # 当前筛选条件
+        self.all_results['待审核'] = review_queue  # 初始化待审核队列
 
+        # 创建审核窗口
         self.win = tk.Toplevel(parent_root)
         self.win.title("人工审核")
         self.win.geometry("1050x900")
@@ -613,29 +759,43 @@ class ReviewWindow:
         self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
 
     def set_label(self, label):
+        """
+        用户标注当前图片的类别
+        
+        这是审核的核心方法，处理用户的标注行为并更新统计信息。
+        审核结果的正确性判断逻辑：
+        - 自动通过中被纠正 → 模型错误（模型太自信给了错误预测）
+        - 待审核中被纠正或确认 → 不是模型错误（模型不确定才送审的）
+        
+        Args:
+            label: 用户选择的标签（'晨读'、'晨跑'或'异常'）
+        """
+        # 如果已经审核完毕，直接返回
         if self.current_idx >= len(self.review_queue):
             return
-        fn = self.review_queue[self.current_idx]
-        original_label = self.scores[fn]['label']  # 模型原始预测
-        original_decision = self.scores[fn]['decision']  # 原始决策
+            
+        fn = self.review_queue[self.current_idx]  # 当前文件名
+        original_label = self.scores[fn]['label']       # 模型原始预测
+        original_decision = self.scores[fn]['decision']  # 原始决策（自动通过/待审核）
 
-        # 从待审核移除，加入对应分类
+        # ========== 1. 更新分类结果 ==========
+        # 先从所有分类列表中移除这张图片（因为可能要换分类）
         if fn in self.results['待审核']:
             self.results['待审核'].remove(fn)
-
-        # 也要从之前的分类中移除
         for cat in ['晨读', '晨跑', '异常']:
             if fn in self.results[cat]:
                 self.results[cat].remove(fn)
-
+        
+        # 加入用户选择的新分类
         self.results[label].append(fn)
 
-        # 记录纠正行为
-        self.parent_system.total_reviews += 1
+        # ========== 2. 更新父系统统计 ==========
+        self.parent_system.total_reviews += 1  # 总审核数+1
         
         # 判断是否需要纠正（只有自动通过后被纠正才算真正的模型错误）
         if original_decision == '自动通过' and label != original_label:
             # 自动通过但被纠正 = 真正的模型错误
+            # 意味着模型给了错误的置信度，误导了自动流程
             self.parent_system.corrected_count += 1
             self.parent_system.review_corrections[fn] = {
                 'original': original_label,
@@ -644,8 +804,10 @@ class ReviewWindow:
             }
         else:
             # 待审核确认或纠正 = 不是模型错误
+            # 这种情况可能是：待审核图片用户确认了原预测，或换了其他分类
             self.parent_system.review_confirmed += 1
 
+        # 移动到下一张
         self.current_idx += 1
         self.show_image()
 
