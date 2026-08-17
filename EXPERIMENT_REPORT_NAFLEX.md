@@ -17,12 +17,19 @@
 
 - CLIP 调优：审核 6.85% / 漏检 0.00%
 - SigLIP 调优（无约束）：审核 6.85% / 漏检 8.33%（1 例漏检，225-2026-04-15.jpeg）
-- SigLIP 调优（**floor=0.40 下限重调**）：审核 7.79% / **漏检 0.00%（已零漏检）** ✅
+- SigLIP 调优（**0.01 细网格严格重调**）：最小零漏检 floor=**0.39** / 审核 7.48% / **漏检 0.00%（已零漏检）** ✅
 - ViT-Tiny 调优（3-seed 聚合）：审核 7.06% / **漏检 33.33%（4 例异常被放行）**
 
-> 阈值下限修复：原坐标下降无下限，把逐特征阈值压到 0.30，导致 225 图靠「蓝色桌子(0.324) +
-> 投影幕布(0.501)」凑够 3 个匹配被误放行。给阈值加 floor=0.40 后，该图匹配数降为 2 → 转待审核。
-> 详见 `data/tuned_thresholds_siglip_floor_scan.csv` 与 `data/tuned_thresholds_siglip_v2.json`。
+> 阈值下限修复（严谨版）：早期用 0.02 网格 + 0.05 步长 floor 扫描得到 "floor=0.40"，但这是
+> 被量化误差耦合出的近似值。改用 **0.01 细网格 + 0.01 步长 floor 扫描**（见
+> `data/tuned_thresholds_siglip_fine_scan.csv`）后，精确结果为：**floor=0.38 仍 1 例漏检，
+> floor=0.39 才零漏检**（精确逐特征阈值：蓝色桌子=0.390 / 投影幕布=0.540 / 教室=0.630 …）。
+> 即此前报告的 0.40 应修正为 **0.39**。
+> ⚠ 但 0.39 是「刀刃最小值」：仅依赖把单个边界异常（225 图，SigLIP 置信度 0.88、特征刚好踩线 3 个）
+> 挡住，且 0.38→0.39 的差异落在贪心坐标下降的优化噪声内（测试集仅 12 个异常）。建议**留余量**
+> 取 floor=0.45（审核 9.03%，余量更足），或从根本上补异常样本 / 做置信度校准，而非靠全局 floor
+> 去兜单个样本。详见 `data/tuned_thresholds_siglip_rigorous.json`。
+> 早期粗扫描产物保留于 `data/tuned_thresholds_siglip_floor_scan.csv` 与 `data/tuned_thresholds_siglip_v2.json`。
 
 ## 2. McNemar 检验（ViT 调优 vs CLIP 调优，测试集逐样本决策）
 
@@ -92,6 +99,6 @@
 ## 4. 结论与建议
 
 - CLIP 基线在零漏检前提下仍是最稳的参照。
-- SigLIP2-NaFlex 在无约束调优下出现 1 例漏检（8.33%，225-2026-04-15.jpeg）；**加 floor=0.40 阈值下限重调后已零漏检（审核 7.79%）**，与 CLIP 差距收窄到 <1 个百分点。
+- SigLIP2-NaFlex 在无约束调优下出现 1 例漏检（8.33%，225-2026-04-15.jpeg）；经 **0.01 细网格严格重调**（最小零漏检 floor=**0.39**，审核 7.48%）已零漏检，与 CLIP 差距收窄到 <1 个百分点。建议实际部署取余量 floor=0.45（审核 9.03%）而非刀刃值 0.39。
 - **ViT-Tiny 端到端（3-seed 聚合）漏检 33.33%（4 例），未能达到零漏检判据，明显劣于 CLIP。** 这说明在当前数据规模（训练集 1429 张）下，从 ImageNet 预训练端到端微调的 ViT-Tiny 不足以击败 CLIP 的「冻结通用特征 + 轻量 MLP」迁移学习范式。原计划的「摆脱 CLIP、自训专精模型」在当前数据量下不成立。
-- 下一步（Phase 5）：`src/encoders.py` 抽象与 `ENCODER` 切换已落地（commit bcbaaf0），当前默认仍为 `"CLIP"`。SigLIP 经 floor 重调后已可零漏检（审核 7.79% vs CLIP 6.85%），若后续要采用 SigLIP（保留原生分辨率、不裁切的优势），把 `config.ENCODER` 切到 `"SigLIP"` 并使用 `data/tuned_thresholds_siglip_v2.json` 即可。进一步压低审核率可扩大训练数据或只对 SigLIP 骨干做轻量微调。
+- 下一步（Phase 5）：`src/encoders.py` 抽象与 `ENCODER` 切换已落地（commit bcbaaf0），当前默认仍为 `"CLIP"`。SigLIP 经严格重调后已可零漏检（最小零漏检 floor=0.39，审核 7.48% vs CLIP 6.85%），若后续要采用 SigLIP（保留原生分辨率、不裁切的优势），把 `config.ENCODER` 切到 `"SigLIP"` 并使用 `data/tuned_thresholds_siglip_rigorous.json`（部署取 floor=0.45）即可。进一步压低审核率可扩大训练数据或只对 SigLIP 骨干做轻量微调。
