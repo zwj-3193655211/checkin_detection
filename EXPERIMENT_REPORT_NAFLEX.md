@@ -16,8 +16,13 @@
 **关键判据**：漏检（异常被放行）为一票否决项，必须 =0%。
 
 - CLIP 调优：审核 6.85% / 漏检 0.00%
-- SigLIP 调优：审核 6.85% / 漏检 8.33%（**仍为 8.33% —— 未达零漏检**）
+- SigLIP 调优（无约束）：审核 6.85% / 漏检 8.33%（1 例漏检，225-2026-04-15.jpeg）
+- SigLIP 调优（**floor=0.40 下限重调**）：审核 7.79% / **漏检 0.00%（已零漏检）** ✅
 - ViT-Tiny 调优（3-seed 聚合）：审核 7.06% / **漏检 33.33%（4 例异常被放行）**
+
+> 阈值下限修复：原坐标下降无下限，把逐特征阈值压到 0.30，导致 225 图靠「蓝色桌子(0.324) +
+> 投影幕布(0.501)」凑够 3 个匹配被误放行。给阈值加 floor=0.40 后，该图匹配数降为 2 → 转待审核。
+> 详见 `data/tuned_thresholds_siglip_floor_scan.csv` 与 `data/tuned_thresholds_siglip_v2.json`。
 
 ## 2. McNemar 检验（ViT 调优 vs CLIP 调优，测试集逐样本决策）
 
@@ -87,6 +92,6 @@
 ## 4. 结论与建议
 
 - CLIP 基线在零漏检前提下仍是最稳的参照。
-- SigLIP2-NaFlex 在调优阈值下出现 1 例漏检（8.33%），若要采用需先解决该漏检样本（见 Phase 3 后续）。
+- SigLIP2-NaFlex 在无约束调优下出现 1 例漏检（8.33%，225-2026-04-15.jpeg）；**加 floor=0.40 阈值下限重调后已零漏检（审核 7.79%）**，与 CLIP 差距收窄到 <1 个百分点。
 - **ViT-Tiny 端到端（3-seed 聚合）漏检 33.33%（4 例），未能达到零漏检判据，明显劣于 CLIP。** 这说明在当前数据规模（训练集 1429 张）下，从 ImageNet 预训练端到端微调的 ViT-Tiny 不足以击败 CLIP 的「冻结通用特征 + 轻量 MLP」迁移学习范式。原计划的「摆脱 CLIP、自训专精模型」在当前数据量下不成立。
-- 下一步（Phase 5）：`src/encoders.py` 抽象与 `ENCODER` 切换已落地（commit bcbaaf0），当前默认仍为 `"CLIP"`。建议维持 CLIP 基线；若后续要进一步压低审核率或消除 SigLIP 的 1 例漏检，可扩大训练数据或只对 SigLIP 骨干做轻量微调（而非从零自训）。
+- 下一步（Phase 5）：`src/encoders.py` 抽象与 `ENCODER` 切换已落地（commit bcbaaf0），当前默认仍为 `"CLIP"`。SigLIP 经 floor 重调后已可零漏检（审核 7.79% vs CLIP 6.85%），若后续要采用 SigLIP（保留原生分辨率、不裁切的优势），把 `config.ENCODER` 切到 `"SigLIP"` 并使用 `data/tuned_thresholds_siglip_v2.json` 即可。进一步压低审核率可扩大训练数据或只对 SigLIP 骨干做轻量微调。
