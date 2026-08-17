@@ -24,6 +24,7 @@
 """
 
 # ==================== PyTorch和数值计算库 ====================
+import os
 import torch
 import torch.nn as nn
 import numpy as np
@@ -54,9 +55,10 @@ from src.config import (
 )
 
 # ==================== 随机种子 ====================
-# 设置随机种子确保实验可复现
-torch.manual_seed(42)
-np.random.seed(42)
+# 设置随机种子确保实验可复现（可用 CHECKIN_SEED 环境变量覆盖，多seed实验用）
+SEED = int(os.environ.get('CHECKIN_SEED', 42))
+torch.manual_seed(SEED)
+np.random.seed(SEED)
 
 # ==================== 特征索引定义 ====================
 # 特征索引将特征名称映射到输出向量的位置
@@ -229,8 +231,10 @@ def load_data():
     """
     project_root = Path(__file__).parent
 
-    # 加载CLIP特征
-    df = pd.read_csv(project_root / 'data' / 'clip_features_cpu.csv')
+    # 加载特征（默认CLIP缓存，可用 CHECKIN_FEATURES_CSV 切换到其他编码器的特征）
+    csv_name = os.environ.get('CHECKIN_FEATURES_CSV', 'clip_features_cpu.csv')
+    df = pd.read_csv(project_root / 'data' / csv_name)
+    print(f"[load_data] 特征文件: {csv_name} (dim={df.shape[1]-1})")
     filenames = df['filename'].tolist()
     features = torch.tensor(df.drop('filename', axis=1).values, dtype=torch.float32)
 
@@ -404,8 +408,8 @@ def train_classifier(X_train, y_train, X_val, y_val, output_path='data/mlp_class
     X_val_filtered = X_val[val_mask]
     y_val_filtered = y_val[val_mask]
 
-    # 创建模型
-    model = MLPClassifier(input_dim=512, hidden_dim=256, output_dim=2, dropout=0.3)
+    # 创建模型（input_dim 从特征维度自动推导，兼容512/768等）
+    model = MLPClassifier(input_dim=X_train.shape[1], hidden_dim=256, output_dim=2, dropout=0.3)
     print(f"\n模型结构:\n{model}")
 
     # 损失函数和优化器
@@ -493,9 +497,9 @@ def train_features(X_train, y_train, X_val, y_val, y_main_val, classifier, outpu
     print("目标: 提高准确性，降低过高置信度")
     print("=" * 60)
 
-    # 创建模型
+    # 创建模型（input_dim 从特征维度自动推导，兼容512/768等）
     model = MLPFeaturesOptimized(
-        input_dim=512,
+        input_dim=X_train.shape[1],
         hidden_dim=512,
         output_dim=11,
         dropout=0.25,
@@ -699,11 +703,14 @@ def main():
     X_val, y_main_val, y_features_val = dataset['val']
     X_test, y_main_test, y_features_test = dataset['test']
 
-    # 3. 训练主分类器
-    classifier = train_classifier(X_train, y_main_train, X_val, y_main_val)
-    
+    # 3. 训练主分类器（输出文件名可用 CHECKIN_MODEL_SUFFIX 加后缀，避免覆盖基线）
+    suffix = os.environ.get('CHECKIN_MODEL_SUFFIX', '')
+    classifier = train_classifier(X_train, y_main_train, X_val, y_main_val,
+                                  output_path=f'data/mlp_classifier{suffix}.pt')
+
     # 4. 训练特征预测器
-    features_model = train_features(X_train, y_features_train, X_val, y_features_val, y_main_val, classifier)
+    features_model = train_features(X_train, y_features_train, X_val, y_features_val, y_main_val, classifier,
+                                    output_path=f'data/mlp_features_optimized{suffix}.pt')
 
     # 5. 评估模型
     evaluate_model(classifier, features_model, X_test, y_main_test, y_features_test)
