@@ -11,6 +11,13 @@ outputs/__pycache__/
 # CLIP 特征缓存
 data/cache/features/*.pt
 
+# 预训练模型权重（SigLIP2等）
+data/models/
+
+# 新特征CSV（体积大，且可随时重提）
+data/siglip_features*.csv
+data/*_naflex*.csv
+
 # Python缓存
 __pycache__/
 src/__pycache__/
