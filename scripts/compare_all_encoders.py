@@ -80,11 +80,6 @@ def three_way(prob_conf, prob_feat, y_main,
                 pass_rate=100.0 - review_count / n * 100 if n else 0.0,
                 miss_count=miss_count, review_count=review_count,
                 anomaly_total=anom, test_size=n)
-    return dict(miss_rate=miss / anom * 100 if anom else 0.0,
-                review_rate=review / n * 100,
-                pass_rate=100.0 - review / n * 100 if n else 0.0,
-                miss_count=miss, review_count=review,
-                anomaly_total=anom, test_size=n)
 
 
 def default_feat_thresh():

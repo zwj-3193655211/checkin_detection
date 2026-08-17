@@ -302,7 +302,19 @@ def main():
     ap.add_argument('--epochs', type=int, default=40)
     a = ap.parse_args()
     if a.all_seeds:
-        allres = [train_one(s, epochs=a.epochs) for s in [42, 123, 777]]
+        # 断点续跑：跳过已经产出 results JSON 的 seed（checkpoint/预测齐全即视为完成）
+        pending = []
+        for s in [42, 123, 777]:
+            res_path = PROJECT_ROOT / 'data' / f'vit_tiny_results_seed{s}.json'
+            if res_path.exists():
+                print(f"[skip] seed {s} 已完成（{res_path.name} 存在），跳过。")
+            else:
+                pending.append(s)
+        if not pending:
+            print("[all-seeds] 所有 seed 均已完成，无需训练。")
+            return
+        print(f"[all-seeds] 待训练 seed: {pending}")
+        allres = [train_one(s, epochs=a.epochs) for s in pending]
         combined = dict(
             seeds=[r['seed'] for r in allres],
             test_miss=[r['test']['miss_rate'] for r in allres],

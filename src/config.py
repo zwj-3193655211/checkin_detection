@@ -69,3 +69,20 @@ RUN_FEATURE_THRESH: int = 5
 
 # 规则2: 晨读自动通过所需最少特征数
 READ_FEATURE_THRESH: int = 3
+
+# =====================================================================
+# 【编码器选择 - Phase 5 系统接入】
+# 切换部署系统使用的视觉编码器，无需改动 checkin_system 主干逻辑。
+#   ENCODER ∈ {"CLIP", "SigLIP", "ViT-Tiny"}
+#   - CLIP    : 通用基线（OpenAI ViT-B/32, 512维, CenterCrop）
+#   - SigLIP  : SigLIP2-NaFlex-B/16（768维, 原生宽高比零裁切）
+#   - ViT-Tiny: 本项目端到端自训（letterbox 零裁切）
+# 注：CLIP 必须与产出 clip_features_cpu.csv 的 OpenAI CLIP 一致。
+# =====================================================================
+ENCODER: str = "CLIP"
+
+# ViT-Tiny 默认使用的训练种子（Phase 3 多 seed 实验产出的最佳/代表权重）
+VIT_TINY_SEED: int = 42
+
+# SigLIP 模型目录（Phase 2 下载，已 gitignore）
+SIGLIP_MODEL_DIR: str = "data/models/siglip2-base-patch16-naflex"
