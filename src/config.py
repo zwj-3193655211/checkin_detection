@@ -53,11 +53,14 @@ FEATURE_THRESHOLD_RUN: float = 0.60
 #   人脸(0), 蓝色桌子(1), 教室(2), 投影幕布(3),
 #   跑道(4), 天空(5), 绿地(6), 树木(7), 旗杆(8), 号码布(9), 主席台(10)
 # 调优方法：验证集正常样本最大化 Youden's J = TPR - FPR（让"打了标签的图易通过、
-# 没打标签的图不易通过"），再叠加 0.54 安全下限保零漏检。
+# 没打标签的图不易通过"）。
+# 安全下限：FEATURE_THRESHOLD_SIGLIP_FLOOR=0.60，任何维度不得低于此值（用户要求）。
+#   纯 Youden 会把部分维度压到 0.36~/0.43，过松；叠加 0.60 下限后恢复零漏检。
 # 仅当 ENCODER == "SigLIP" 时由 _get_feature_threshold 选用；CLIP 仍用上方分组阈值。
 # 来源：scripts/tune_siglip_perfeature.py → data/tuned_thresholds_siglip_perfeature.json
+FEATURE_THRESHOLD_SIGLIP_FLOOR: float = 0.60
 FEATURE_THRESHOLD_PER_FEATURE_SIGLIP: list[float] = [
-    0.54, 0.55, 0.63, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54, 0.54,
+    0.60, 0.60, 0.63, 0.60, 0.60, 0.60, 0.60, 0.60, 0.60, 0.60, 0.60,
 ]
 
 # =====================================================================

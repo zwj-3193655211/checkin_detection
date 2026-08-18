@@ -232,7 +232,8 @@ def main():
         print(f"  floor={fl:.2f} | review={m['review_rate']:>6.2f}%  "
               f"pass={m['pass_rate']:>6.2f}%  miss={m['miss_rate']:>6.2f}%  "
               f"avgFeatAcc={avg_acc*100:>5.2f}%  {'<< 零漏检' if zero else ''}")
-        if zero and recommended is None:
+        # 强制推荐 = 用户要求的 0.60 安全下限配置（任何维度不得低于 0.60）
+        if abs(fl - 0.60) < 1e-9:
             recommended = dict(floor=fl, thresholds={n: round(float(h[FEATURE_INDEX[n]]), 3)
                                                      for n in FEAT_NAMES},
                                three_way=dict(review_rate=round(m["review_rate"], 2),

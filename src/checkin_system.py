@@ -56,6 +56,7 @@ from config import (
     FEATURE_THRESHOLD_READ,
     FEATURE_THRESHOLD_RUN,
     FEATURE_THRESHOLD_PER_FEATURE_SIGLIP,
+    FEATURE_THRESHOLD_SIGLIP_FLOOR,
     ENCODER,
     ALPHA_AUTO_PASS,
     ALPHA_REVIEW,
@@ -67,10 +68,10 @@ from config import (
 TEMPERATURE = CLASSIFIER_TEMPERATURE
 
 # per-feature 阈值 helper（索引0-3晨读用0.66，4-10晨跑用0.60）
-# SigLIP 编码器改用逐维度 Youden 调优阈值（更准确、更安全）。
+# SigLIP 编码器改用逐维度 Youden 调优阈值，并硬性不低于 0.60 安全下限（用户要求）。
 def _get_feature_threshold(idx: int) -> float:
     if ENCODER == "SigLIP" and 0 <= idx < len(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP):
-        return FEATURE_THRESHOLD_PER_FEATURE_SIGLIP[idx]
+        return max(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP[idx], FEATURE_THRESHOLD_SIGLIP_FLOOR)
     return FEATURE_THRESHOLD_READ if idx < 4 else FEATURE_THRESHOLD_RUN
 
 # CLIP文本提示词（用于特征相似度计算）

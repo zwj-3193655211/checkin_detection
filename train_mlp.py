@@ -48,6 +48,7 @@ from src.config import (
     FEATURE_THRESHOLD_READ,                  # 晨读特征阈值
     FEATURE_THRESHOLD_RUN,                   # 晨跑特征阈值
     FEATURE_THRESHOLD_PER_FEATURE_SIGLIP,    # SigLIP 逐维度阈值
+    FEATURE_THRESHOLD_SIGLIP_FLOOR,          # SigLIP 逐维度阈值安全下限
     ENCODER,                                 # 当前编码器
     ALPHA_AUTO_PASS,                         # 自动通过置信度阈值
     ALPHA_REVIEW,                            # 待审核置信度阈值
@@ -86,7 +87,7 @@ def _get_feature_threshold(idx):
     晨读场景特征较少（4个），使用较高阈值确保准确性
     晨跑场景特征较多（8个），使用稍低阈值提高检出率
     
-    SigLIP 编码器改用逐维度 Youden 调优阈值（更准确、更安全）。
+    SigLIP 编码器改用逐维度 Youden 调优阈值，并硬性不低于 0.60 安全下限（用户要求）。
     
     Args:
         idx: 特征索引 (0-10)
@@ -95,7 +96,7 @@ def _get_feature_threshold(idx):
         float: 对应特征的阈值
     """
     if ENCODER == "SigLIP" and 0 <= idx < len(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP):
-        return FEATURE_THRESHOLD_PER_FEATURE_SIGLIP[idx]
+        return max(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP[idx], FEATURE_THRESHOLD_SIGLIP_FLOOR)
     return FEATURE_THRESHOLD_READ if idx < 4 else FEATURE_THRESHOLD_RUN
 
 
