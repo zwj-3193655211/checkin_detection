@@ -112,6 +112,8 @@ def main():
     print("=" * 78)
     single = get_preds_single()
     split = get_preds_split()
+    # 测试集 11 维特征真值（与上面的预测按相同 test_files 顺序对齐）
+    _, _, (_, _, yf_test) = S.load_data_siglip()
 
     results = {}
     for arch_name, preds in [("baseline_single_head", single), ("split_11_head", split)]:
@@ -127,7 +129,7 @@ def main():
                     best = (fl, mt, tuned)
         fl, mt, tuned = best
         thr = {n: round(float(tuned[FEATURE_INDEX[n]]), 3) for n in FEATURE_NAMES}
-        acc = feat_acc(tpf, ty)
+        acc = feat_acc(tpf, yf_test)
         results[arch_name] = dict(
             minimal_zero_miss_floor=fl,
             test_review_rate=mt["review_rate"], test_pass_rate=mt["pass_rate"],
