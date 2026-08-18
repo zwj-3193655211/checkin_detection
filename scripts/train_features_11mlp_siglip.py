@@ -21,7 +21,10 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import sys
 import torch.nn.functional as F
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import (
     CLASSIFIER_TEMPERATURE, FEATURE_TEMPERATURE,
