@@ -1,14 +1,21 @@
 """
-晨读晨练签到检测系统 - MLP增强版（保留老系统流程）
+晨读晨练签到检测系统 - MLP增强版（保留老系统流程，支持 UI 动态切换编码器）
 
 系统架构:
-- CLIP (ViT-B/32): 负责从图片中提取512维特征向量
+- 编码器抽象（src/encoders.py 工厂）: 负责从图片提取特征向量 + 双 MLP 头
+    * CLIP (ViT-B/32, 512维): 通用基线特征提取
+    * SigLIP2-NaFlex-B/16 (768维): 原生宽高比零裁切
+    * （ViT-Tiny 自训权重已清理，暂不可用）
 - MLPClassifier (二分类): 预测图片属于"晨读"还是"晨跑"
 - MLPFeaturesOptimized (特征预测): 预测图片中包含的11种视觉特征
 
+UI 交互:
+- 顶部"识别模型"下拉框可即时切换 CLIP / SigLIP，切换即重载编码器与 MLP 头，
+  并动态刷新标题、状态栏、参数栏与各维度阈值策略。
+
 核心流程:
 1. 用户选择包含待检测图片的文件夹
-2. 系统对每张图片进行CLIP特征提取
+2. 系统对每张图片进行编码器特征提取（按当前选择模型）
 3. 双MLP模型进行预测，同时输出分类结果和特征预测
 4. 三支决策规则决定是自动通过还是人工审核
 5. 用户可对审核队列中的图片进行人工校正
@@ -24,7 +31,6 @@ import tkinter as tk                      # Python标准GUI库
 from tkinter import ttk, messagebox, filedialog  # tkinter子模块
 from PIL import Image, ImageTk             # 图片处理和GUI图片对象
 import torch
-import clip                                # OpenAI CLIP模型
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
@@ -34,8 +40,10 @@ import sys
 # 保证无论从项目根目录（作为 src.checkin_system 被 import）还是直接运行
 # src/checkin_system.py，都能解析到 src/ 下的 config 与 models 包。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from models.mlp import MLPClassifier               # 二分类器（晨读/晨跑）
-from models.mlp_features_optimized import MLPFeaturesOptimized  # 特征预测器（11维）
+# 统一编码器抽象（CLIP / SigLIP / ViT-Tiny 工厂）；UI 动态切换模型依赖它。
+# clip / 两个 MLP 头改由 encoders.py 内部按需在对应 encoder 中导入，
+# 从而纯 SigLIP 运行时不再强制依赖 openai/clip。
+from encoders import get_encoder, available_encoders
 
 # ==================== 特征索引定义（11维）====================
 FEATURE_INDEX = {
@@ -73,8 +81,9 @@ TEMPERATURE = CLASSIFIER_TEMPERATURE
 
 # per-feature 阈值 helper（索引0-3晨读用0.66，4-10晨跑用0.60）
 # SigLIP 编码器改用逐维度 Youden 调优阈值，并硬性不低于 0.60 安全下限（用户要求）。
-def _get_feature_threshold(idx: int) -> float:
-    if ENCODER == "SigLIP" and 0 <= idx < len(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP):
+# encoder_name 由调用方传入（实例当前激活的编码器），不再依赖全局 ENCODER 配置。
+def _get_feature_threshold(idx: int, encoder_name: str = "CLIP") -> float:
+    if encoder_name == "SigLIP" and 0 <= idx < len(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP):
         return max(FEATURE_THRESHOLD_PER_FEATURE_SIGLIP[idx], FEATURE_THRESHOLD_SIGLIP_FLOOR)
     return FEATURE_THRESHOLD_READ if idx < 4 else FEATURE_THRESHOLD_RUN
 
@@ -128,39 +137,12 @@ class MLPCheckInSystem:
         # 优先使用GPU（cuda），否则使用CPU
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # ========== 加载CLIP模型 ==========
-        # CLIP负责将图片编码为512维特征向量
-        # ViT-B/32: Vision Transformer Base，patch大小32×32
-        print("加载CLIP...")
-        self.clip_model, self.preprocess = clip.load("ViT-B/32", device=self.device)
-        self.clip_model.eval()  # 推理模式，禁用dropout
-        print(f"CLIP已加载: {self.device}")
+        # ========== 加载编码器（UI 可动态切换 CLIP / SigLIP）==========
+        # 编码器内部负责：图片 -> 特征向量 -> 双 MLP 头（分类 + 11维特征）。
+        # 初始加载 config.ENCODER 指定的编码器（默认 CLIP）。
+        print("加载编码器...")
+        self._load_encoder(ENCODER)
 
-        # ========== 加载MLP模型 ==========
-        # 系统使用双MLP架构：
-        # 1. mlp_classifier: 二分类模型，判断是晨读还是晨跑
-        # 2. mlp_features: 特征预测模型，预测11种视觉特征的存在概率
-        print("加载MLP...")
-        base = os.path.dirname(os.path.abspath(__file__))
-        data_dir = os.path.join(os.path.dirname(base), 'data')
-        
-        # 主分类器 - 二分类模型（晨读/晨跑）
-        # 输入: 512维CLIP特征, 输出: 2维logits（晨读/晨跑）
-        self.mlp_classifier = MLPClassifier(input_dim=512, hidden_dim=256, output_dim=2)
-        self.mlp_classifier.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_classifier.pt')))
-        self.mlp_classifier.eval()
-        print("  - mlp_classifier.pt 已加载（二分类模型）")
-        
-        # 特征预测器 - 11维特征预测（可解释性增强）
-        # 温度参数来自config.py，推理时使用温度缩放降低过度自信
-        self.mlp_features = MLPFeaturesOptimized(
-            input_dim=512, hidden_dim=512, output_dim=11, 
-            dropout=0.3, temperature=FEATURE_TEMPERATURE
-        )
-        self.mlp_features.load_state_dict(torch.load(os.path.join(data_dir, 'mlp_features_optimized.pt')))
-        self.mlp_features.eval()
-        print("  - mlp_features.pt 已加载")
-        
         # 标签映射：0->晨读，1->晨跑
         self.id2label = {0: '晨读', 1: '晨跑'}
 
@@ -181,6 +163,58 @@ class MLPCheckInSystem:
         self.setup_paths()
         self.setup_ui()
 
+    # ---------------------------------------------------------------
+    # 编码器动态加载 / 切换
+    # ---------------------------------------------------------------
+    def _load_encoder(self, name: str):
+        """按名称构造编码器（含其内部双 MLP 头），并设为当前激活编码器。"""
+        enc = get_encoder(name, device=self.device)
+        self.encoder = enc
+        self.encoder_name = name
+        print(f"编码器已加载: {enc.name} ({self.device})")
+
+    def _on_encoder_change(self, event=None):
+        """UI 下拉框切换模型：重载编码器与其 MLP 头，并刷新界面文案。"""
+        name = self.encoder_var.get()
+        if name == self.encoder_name:
+            return
+        self.info_text.insert(tk.END, f"\n正在切换到模型: {name} ...\n")
+        self.info_text.see(tk.END)
+        self.root.update()
+        try:
+            self._load_encoder(name)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror("模型加载失败",
+                                 f"无法加载编码器 [{name}]:\n{e}\n\n已回退到 {self.encoder_name}。")
+            self.encoder_var.set(self.encoder_name)
+            return
+        self._update_encoder_ui()
+        self.info_text.insert(tk.END, f"已切换至: {self.encoder.name}\n")
+        self.info_text.see(tk.END)
+
+    def _update_encoder_ui(self):
+        """根据当前编码器刷新标题副标题、状态栏、参数栏文案。"""
+        disp = getattr(self.encoder, "name", self.encoder_name)
+        # 窗口标题
+        self.root.title(f"晨读晨练签到检测系统 - {disp}")
+        # 标题副标题（canvas 文本项）
+        if getattr(self, "subtitle_id", None) is not None:
+            self.title_canvas.itemconfig(self.subtitle_id, text=f"MLP分类器 + {disp}特征提取")
+        # 状态栏
+        self.status_label.config(text=f"就绪 | 模型: {disp} + MLP | 准确率: 99.95%")
+        # 参数栏
+        params_text = (f"编码器: {disp} | 二分类MLP | 自动通过≥{ALPHA_AUTO_PASS} | "
+                       f"待审核<{ALPHA_REVIEW} | 特征≥{MIN_FEATURES}")
+        self.param_label.config(text=params_text)
+
+    def _encoder_choices(self):
+        """下拉框可用选项：只暴露已具备权重、可实例化的编码器。
+        ViT-Tiny 的训练脚本与权重已删除，暂不可用，故不列出。"""
+        avail = set(available_encoders())
+        return [c for c in ("CLIP", "SigLIP") if c in avail]
+
     def setup_paths(self):
         base = os.path.dirname(os.path.abspath(__file__))
         self.data_dir = os.path.join(os.path.dirname(base), 'data', 'raw')
@@ -198,8 +232,8 @@ class MLPCheckInSystem:
         title_frame.pack(fill=tk.X)
         title_frame.pack_propagate(False)
 
-        title_canvas = tk.Canvas(title_frame, width=1100, height=80, bg='#1a5f7a', highlightthickness=0)
-        title_canvas.pack(fill=tk.BOTH)
+        self.title_canvas = tk.Canvas(title_frame, width=1100, height=80, bg='#1a5f7a', highlightthickness=0)
+        self.title_canvas.pack(fill=tk.BOTH)
 
         # 渐变色
         for i in range(1100):
@@ -208,14 +242,31 @@ class MLPCheckInSystem:
             g = int(95 + (140 - 95) * ratio)
             b = int(122 + (192 - 122) * ratio)
             color = f'#{r:02x}{g:02x}{b:02x}'
-            title_canvas.create_line(i, 0, i, 80, fill=color)
+            self.title_canvas.create_line(i, 0, i, 80, fill=color)
 
-        title_canvas.create_text(30, 35, text="晨读晨练签到检测系统", font=('Microsoft YaHei', 24, 'bold'), fill='white', anchor='w')
-        title_canvas.create_text(30, 58, text="MLP分类器 + CLIP特征提取", font=('Microsoft YaHei', 10), fill='#87ceeb', anchor='w')
+        self.title_canvas.create_text(30, 35, text="晨读晨练签到检测系统", font=('Microsoft YaHei', 24, 'bold'), fill='white', anchor='w')
+        # 副标题（编码器名动态刷新，见 _update_encoder_ui）
+        self.subtitle_id = self.title_canvas.create_text(
+            30, 58, text="MLP分类器 + 特征提取", font=('Microsoft YaHei', 10), fill='#87ceeb', anchor='w')
 
         # 主框架
         main_frame = tk.Frame(self.root, bg='#e8f4f8')
         main_frame.pack(fill=tk.BOTH, expand=True, padx=25, pady=20)
+
+        # 模型选择行（UI 动态切换 CLIP / SigLIP，切换即时重载编码器与阈值）
+        model_frame = tk.Frame(main_frame, bg='#e8f4f8')
+        model_frame.pack(fill=tk.X, pady=(0, 12))
+        tk.Label(model_frame, text="识别模型:", font=('Microsoft YaHei', 12, 'bold'),
+                 bg='#e8f4f8', fg='#1a5f7a').pack(side=tk.LEFT, padx=(0, 8))
+        self.encoder_var = tk.StringVar(value=self.encoder_name)
+        self.encoder_combo = ttk.Combobox(
+            model_frame, textvariable=self.encoder_var,
+            values=self._encoder_choices(), state='readonly', width=24,
+            font=('Microsoft YaHei', 11))
+        self.encoder_combo.pack(side=tk.LEFT)
+        self.encoder_combo.bind('<<ComboboxSelected>>', self._on_encoder_change)
+        tk.Label(model_frame, text="（切换即时重载编码器与阈值）",
+                 font=('Microsoft YaHei', 9), bg='#e8f4f8', fg='#888').pack(side=tk.LEFT, padx=10)
 
         # 操作按钮
         step_frame = tk.LabelFrame(main_frame, text=" 操作步骤 ", font=('Microsoft YaHei', 13, 'bold'),
@@ -244,7 +295,8 @@ class MLPCheckInSystem:
         param_frame.pack(fill=tk.X, pady=(0, 20))
 
         params_text = f"二分类MLP | 自动通过≥{ALPHA_AUTO_PASS} | 待审核<{ALPHA_REVIEW} | 特征≥{MIN_FEATURES}"
-        tk.Label(param_frame, text=params_text, font=('Consolas', 10), bg='#e8f4f8', fg='#666').pack()
+        self.param_label = tk.Label(param_frame, text=params_text, font=('Consolas', 10), bg='#e8f4f8', fg='#666')
+        self.param_label.pack()
 
         # 结果显示
         result_frame = tk.LabelFrame(main_frame, text=" 检测结果 ", font=('Microsoft YaHei', 13, 'bold'),
@@ -272,6 +324,9 @@ class MLPCheckInSystem:
                                      font=('Microsoft YaHei', 10), bg='#1a5f7a', fg='white')
         self.status_label.pack(pady=8)
 
+        # 用当前激活编码器统一刷新标题/副标题/状态栏/参数栏文案
+        self._update_encoder_ui()
+
         self.root.mainloop()
 
     def predict(self, image_path):
@@ -286,27 +341,18 @@ class MLPCheckInSystem:
                 - 预测标签: '晨读' 或 '晨跑'
                 - 置信度: 0~1之间的概率值
         """
-        # ========== 1. CLIP特征提取 ==========
-        # 将图片加载并转换为CLIP输入格式
+        # ========== 1. 编码器：图片 -> (分类softmax, 11维特征sigmoid) ==========
+        # 编码器内部已含 CLIP/SigLIP 特征提取 + 双 MLP 头 + 温度缩放，
+        # 与 train_mlp / Phase 4 公平对比完全一致。
         img = Image.open(image_path).convert('RGB')  # 确保是RGB格式
-        img_input = self.preprocess(img).unsqueeze(0).to(self.device)  # 添加batch维度
-
         with torch.no_grad():
-            # CLIP编码：图片 -> 512维特征向量
-            image_features = self.clip_model.encode_image(img_input)
+            cl, ft = self.encoder.predict([img])
 
-        # ========== 2. 双MLP预测 ==========
-        with torch.no_grad():
-            # 主分类器：判断晨读还是晨跑
-            out = self.mlp_classifier(image_features.float())
-            probs = torch.softmax(out, dim=1)  # 转为概率分布
-            pred_main = probs.argmax(dim=1).item()  # 取概率最大的类别
-            confidence = probs[0][pred_main].item()  # 获取该类的概率值
-            pred_label = self.id2label.get(pred_main, '未知')
-            
-            # 特征预测器：预测11维特征的存在概率
-            out_features = self.mlp_features(image_features.float(), inference=True)
-            feature_probs = torch.sigmoid(out_features)[0].tolist()  # Sigmoid转为0~1
+        # ========== 2. 取分类结果与置信度 ==========
+        probs = cl[0]
+        pred_main = int(probs.argmax())
+        confidence = float(probs[pred_main])
+        pred_label = self.id2label.get(pred_main, '未知')
 
         return pred_label, confidence
 
@@ -325,31 +371,24 @@ class MLPCheckInSystem:
         Returns:
             tuple: (预测标签, 置信度, 决策, 高置信度特征数, 特征相似度字典)
         """
-        # ========== 1. CLIP特征提取 ==========
+        # ========== 1. 编码器：图片 -> (分类softmax, 11维特征sigmoid) ==========
+        # 编码器内部已含 CLIP/SigLIP 特征提取 + 双 MLP 头 + 温度缩放。
         img = Image.open(image_path).convert('RGB')
-        img_input = self.preprocess(img).unsqueeze(0).to(self.device)
-
         with torch.no_grad():
-            image_features = self.clip_model.encode_image(img_input)
+            cl, ft = self.encoder.predict([img])
 
-        # ========== 2. 双MLP预测 + Temperature Scaling ==========
-        # Temperature Scaling: 用温度参数除以logits，降低过度自信
-        # 温度>1会让概率分布更平滑，温度=1就是原始softmax
-        with torch.no_grad():
-            # 主分类器 + 温度缩放
-            out = self.mlp_classifier(image_features.float())
-            probs = torch.softmax(out / TEMPERATURE, dim=1)
-            pred_main = probs.argmax(dim=1).item()
-            confidence = probs[0][pred_main].item()
-            pred_label = self.id2label.get(pred_main, '未知')
-            
-            # 特征预测器（推理模式）
-            out_features = self.mlp_features(image_features.float(), inference=True)
-            feature_probs = torch.sigmoid(out_features)[0].tolist()
+        # ========== 2. 取分类结果与置信度 ==========
+        probs = cl[0]
+        pred_main = int(probs.argmax())
+        confidence = float(probs[pred_main])
+        pred_label = self.id2label.get(pred_main, '未知')
+
+        # 特征概率（编码器已含 sigmoid + 温度缩放）
+        feature_probs = ft[0].tolist()
 
         # ========== 3. 号码布单独增强 ==========
         # 号码布是晨跑的关键标识，将其得分乘以2以提高检出率
-        # 但最高不超过0.95（留一点不确定性）
+        # 但最高不超过1.0（留一点不确定性）
         feature_probs[9] = min(feature_probs[9] * 2, 1.0)
 
         # ========== 4. 构建特征相似度字典（可解释性） ==========
@@ -359,9 +398,11 @@ class MLPCheckInSystem:
         feature_sims = {name: float(feature_probs[i]) for i, name in enumerate(feature_names)}
 
         # ========== 5. 统计高置信度特征数量 ==========
-        # 每个特征有独立阈值：晨读特征(idx 0-3)用0.66，晨跑特征(idx 4-10)用0.60
+        # 每个特征有独立阈值：CLIP 用分组阈值(晨读0.66/晨跑0.60)，
+        # SigLIP 用逐维度 Youden + 0.60 下限（见 _get_feature_threshold）
+        enc = self.encoder_name
         high_sim_count = sum(1 for i, p in enumerate(feature_probs) 
-                            if p > _get_feature_threshold(i))
+                            if p > _get_feature_threshold(i, enc))
 
         # ========== 6. 三支决策规则 ==========
         # 定义每个类别应该包含的特征（用于特征匹配）
@@ -373,7 +414,7 @@ class MLPCheckInSystem:
         
         # 统计匹配上的特征数量（必须在对应类别的特征列表中，且置信度超过阈值）
         matched_features = [f for i, f in enumerate(feature_names) 
-                           if feature_sims.get(f, 0) > _get_feature_threshold(i) 
+                           if feature_sims.get(f, 0) > _get_feature_threshold(i, enc) 
                            and f in class_features]
         matched_count = len(matched_features)
         
@@ -545,7 +586,7 @@ class MLPCheckInSystem:
                 'alpha_review': ALPHA_REVIEW,
                 'feature_threshold': f'晨读{FEATURE_THRESHOLD_READ}/晨跑{FEATURE_THRESHOLD_RUN}',
                 'min_features': MIN_FEATURES,
-                'model': '二分类MLP+CLIP'
+                'model': f'二分类MLP+{getattr(self.encoder, "name", self.encoder_name)}'
             },
             'corrections': self.review_corrections,
             'scores': self.scores
@@ -748,7 +789,7 @@ class ReviewWindow:
                 info_text += "\n特征预测:"
                 for k, v in sorted_sims:
                     fidx = feature_names.index(k) if k in feature_names else -1
-                    if v > (_get_feature_threshold(fidx) if fidx >= 0 else FEATURE_THRESHOLD_RUN):
+                    if v > (_get_feature_threshold(fidx, self.parent_system.encoder_name) if fidx >= 0 else FEATURE_THRESHOLD_RUN):
                         info_text += f" {k}:{v:.2f}"
 
             self.score_label.config(text=info_text, font=('Consolas', 9))
