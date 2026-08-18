@@ -28,8 +28,12 @@ import clip                                # OpenAI CLIP模型
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
+import sys
 
 # ==================== 项目内部导入 ====================
+# 保证无论从项目根目录（作为 src.checkin_system 被 import）还是直接运行
+# src/checkin_system.py，都能解析到 src/ 下的 config 与 models 包。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models.mlp import MLPClassifier               # 二分类器（晨读/晨跑）
 from models.mlp_features_optimized import MLPFeaturesOptimized  # 特征预测器（11维）
 
