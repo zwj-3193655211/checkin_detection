@@ -1,0 +1,385 @@
+{
+  "method": "per_feature_youden",
+  "criterion": "maximize Youden's J=TPR-FPR (balances 'labeled pass' & 'unlabeled not pass'); tie-break TPR then acc",
+  "grid_step": 0.01,
+  "n_val_normal": 305,
+  "n_test_normal": 309,
+  "thresholds_youden": {
+    "人脸": 0.52,
+    "蓝色桌子": 0.55,
+    "教室": 0.63,
+    "投影幕布": 0.43,
+    "跑道": 0.4,
+    "天空": 0.44,
+    "绿地": 0.37,
+    "树木": 0.36,
+    "旗杆": 0.37,
+    "号码布": 0.38,
+    "主席台": 0.37
+  },
+  "per_feature": {
+    "人脸": {
+      "index": 0,
+      "pos": 290,
+      "neg": 15,
+      "threshold": 0.52,
+      "default_threshold": 0.66,
+      "val": {
+        "tpr": 0.9828,
+        "tnr": 1.0,
+        "fpr": 0.0,
+        "acc": 0.9836,
+        "f1": 0.9913
+      },
+      "test": {
+        "tpr": 0.9891,
+        "tnr": 0.9118,
+        "fpr": 0.0882,
+        "acc": 0.9806,
+        "f1": 0.9891
+      },
+      "test_acc_default": 0.8091
+    },
+    "蓝色桌子": {
+      "index": 1,
+      "pos": 207,
+      "neg": 98,
+      "threshold": 0.55,
+      "default_threshold": 0.66,
+      "val": {
+        "tpr": 0.9517,
+        "tnr": 0.9796,
+        "fpr": 0.0204,
+        "acc": 0.9607,
+        "f1": 0.9704
+      },
+      "test": {
+        "tpr": 0.9526,
+        "tnr": 0.9694,
+        "fpr": 0.0306,
+        "acc": 0.9579,
+        "f1": 0.9687
+      },
+      "test_acc_default": 0.6764
+    },
+    "教室": {
+      "index": 2,
+      "pos": 223,
+      "neg": 82,
+      "threshold": 0.63,
+      "default_threshold": 0.66,
+      "val": {
+        "tpr": 0.991,
+        "tnr": 1.0,
+        "fpr": 0.0,
+        "acc": 0.9934,
+        "f1": 0.9955
+      },
+      "test": {
+        "tpr": 0.9956,
+        "tnr": 0.9881,
+        "fpr": 0.0119,
+        "acc": 0.9935,
+        "f1": 0.9956
+      },
+      "test_acc_default": 0.89
+    },
+    "投影幕布": {
+      "index": 3,
+      "pos": 222,
+      "neg": 83,
+      "threshold": 0.43,
+      "default_threshold": 0.66,
+      "val": {
+        "tpr": 1.0,
+        "tnr": 0.9759,
+        "fpr": 0.0241,
+        "acc": 0.9934,
+        "f1": 0.9955
+      },
+      "test": {
+        "tpr": 1.0,
+        "tnr": 0.9651,
+        "fpr": 0.0349,
+        "acc": 0.9903,
+        "f1": 0.9933
+      },
+      "test_acc_default": 0.7023
+    },
+    "跑道": {
+      "index": 4,
+      "pos": 53,
+      "neg": 252,
+      "threshold": 0.4,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 1.0,
+        "tnr": 0.9365,
+        "fpr": 0.0635,
+        "acc": 0.9475,
+        "f1": 0.8689
+      },
+      "test": {
+        "tpr": 0.9821,
+        "tnr": 0.9368,
+        "fpr": 0.0632,
+        "acc": 0.945,
+        "f1": 0.8661
+      },
+      "test_acc_default": 0.9547
+    },
+    "天空": {
+      "index": 5,
+      "pos": 62,
+      "neg": 243,
+      "threshold": 0.44,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 0.9839,
+        "tnr": 0.9506,
+        "fpr": 0.0494,
+        "acc": 0.9574,
+        "f1": 0.9037
+      },
+      "test": {
+        "tpr": 0.9701,
+        "tnr": 0.9587,
+        "fpr": 0.0413,
+        "acc": 0.9612,
+        "f1": 0.9155
+      },
+      "test_acc_default": 0.9482
+    },
+    "绿地": {
+      "index": 6,
+      "pos": 62,
+      "neg": 243,
+      "threshold": 0.37,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 0.9677,
+        "tnr": 0.9506,
+        "fpr": 0.0494,
+        "acc": 0.9541,
+        "f1": 0.8955
+      },
+      "test": {
+        "tpr": 0.9706,
+        "tnr": 0.9668,
+        "fpr": 0.0332,
+        "acc": 0.9676,
+        "f1": 0.9296
+      },
+      "test_acc_default": 0.9417
+    },
+    "树木": {
+      "index": 7,
+      "pos": 63,
+      "neg": 242,
+      "threshold": 0.36,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 0.9841,
+        "tnr": 0.9463,
+        "fpr": 0.0537,
+        "acc": 0.9541,
+        "f1": 0.8986
+      },
+      "test": {
+        "tpr": 0.9833,
+        "tnr": 0.9357,
+        "fpr": 0.0643,
+        "acc": 0.945,
+        "f1": 0.8741
+      },
+      "test_acc_default": 0.9094
+    },
+    "旗杆": {
+      "index": 8,
+      "pos": 27,
+      "neg": 278,
+      "threshold": 0.37,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 0.8889,
+        "tnr": 0.9424,
+        "fpr": 0.0576,
+        "acc": 0.9377,
+        "f1": 0.7164
+      },
+      "test": {
+        "tpr": 0.92,
+        "tnr": 0.9542,
+        "fpr": 0.0458,
+        "acc": 0.9515,
+        "f1": 0.7541
+      },
+      "test_acc_default": 0.9515
+    },
+    "号码布": {
+      "index": 9,
+      "pos": 16,
+      "neg": 289,
+      "threshold": 0.38,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 0.9375,
+        "tnr": 0.9931,
+        "fpr": 0.0069,
+        "acc": 0.9902,
+        "f1": 0.9091
+      },
+      "test": {
+        "tpr": 0.9231,
+        "tnr": 0.9899,
+        "fpr": 0.0101,
+        "acc": 0.9871,
+        "f1": 0.8571
+      },
+      "test_acc_default": 0.9871
+    },
+    "主席台": {
+      "index": 10,
+      "pos": 34,
+      "neg": 271,
+      "threshold": 0.37,
+      "default_threshold": 0.6,
+      "val": {
+        "tpr": 0.9706,
+        "tnr": 0.9373,
+        "fpr": 0.0627,
+        "acc": 0.941,
+        "f1": 0.7857
+      },
+      "test": {
+        "tpr": 0.8846,
+        "tnr": 0.9223,
+        "fpr": 0.0777,
+        "acc": 0.9191,
+        "f1": 0.6479
+      },
+      "test_acc_default": 0.9579
+    }
+  },
+  "system_three_way_test": {
+    "default": {
+      "review_rate": 43.3,
+      "pass_rate": 56.7,
+      "miss_rate": 0.0,
+      "miss_count": 0
+    },
+    "floor_0.39": {
+      "review_rate": 7.48,
+      "pass_rate": 92.52,
+      "miss_rate": 0.0,
+      "miss_count": 0
+    },
+    "per_feature_youden": {
+      "review_rate": 8.72,
+      "pass_rate": 91.28,
+      "miss_rate": 8.33,
+      "miss_count": 1
+    }
+  },
+  "hybrid_floor_scan": [
+    {
+      "floor": 0.39,
+      "review_rate": 8.72,
+      "pass_rate": 91.28,
+      "miss_rate": 8.33,
+      "miss_count": 1,
+      "avg_test_feature_acc": 0.967
+    },
+    {
+      "floor": 0.4,
+      "review_rate": 8.72,
+      "pass_rate": 91.28,
+      "miss_rate": 8.33,
+      "miss_count": 1,
+      "avg_test_feature_acc": 0.9685
+    },
+    {
+      "floor": 0.42,
+      "review_rate": 9.03,
+      "pass_rate": 90.97,
+      "miss_rate": 8.33,
+      "miss_count": 1,
+      "avg_test_feature_acc": 0.97
+    },
+    {
+      "floor": 0.45,
+      "review_rate": 9.35,
+      "pass_rate": 90.65,
+      "miss_rate": 8.33,
+      "miss_count": 1,
+      "avg_test_feature_acc": 0.9723
+    },
+    {
+      "floor": 0.5,
+      "review_rate": 9.66,
+      "pass_rate": 90.34,
+      "miss_rate": 8.33,
+      "miss_count": 1,
+      "avg_test_feature_acc": 0.9715
+    },
+    {
+      "floor": 0.54,
+      "review_rate": 10.59,
+      "pass_rate": 89.41,
+      "miss_rate": 0.0,
+      "miss_count": 0,
+      "avg_test_feature_acc": 0.9694
+    },
+    {
+      "floor": 0.55,
+      "review_rate": 11.21,
+      "pass_rate": 88.79,
+      "miss_rate": 0.0,
+      "miss_count": 0,
+      "avg_test_feature_acc": 0.9673
+    },
+    {
+      "floor": 0.6,
+      "review_rate": 14.95,
+      "pass_rate": 85.05,
+      "miss_rate": 0.0,
+      "miss_count": 0,
+      "avg_test_feature_acc": 0.9579
+    },
+    {
+      "floor": 0.66,
+      "review_rate": 50.47,
+      "pass_rate": 49.53,
+      "miss_rate": 0.0,
+      "miss_count": 0,
+      "avg_test_feature_acc": 0.8653
+    }
+  ],
+  "recommended": {
+    "floor": 0.54,
+    "thresholds": {
+      "人脸": 0.54,
+      "蓝色桌子": 0.55,
+      "教室": 0.63,
+      "投影幕布": 0.54,
+      "跑道": 0.54,
+      "天空": 0.54,
+      "绿地": 0.54,
+      "树木": 0.54,
+      "旗杆": 0.54,
+      "号码布": 0.54,
+      "主席台": 0.54
+    },
+    "three_way": {
+      "review_rate": 10.59,
+      "pass_rate": 89.41,
+      "miss_rate": 0.0,
+      "miss_count": 0
+    }
+  },
+  "avg_test_feature_accuracy": {
+    "default": 0.8844,
+    "per_feature_youden": 0.9635
+  },
+  "note": "逐维度阈值以验证集正常样本最大化 Youden's J 选出，显著提升各维度准确率；但纯 Youden 会移除旧 floor 的异常防护导致 1/12 漏检。推荐混合配置=Youden 主 + 最小安全下限(保零漏检)，在几乎不损维度准确率的前提下恢复零漏检。"
+}
