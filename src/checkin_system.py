@@ -35,6 +35,7 @@ import torch.nn as nn
 import numpy as np
 from pathlib import Path
 import sys
+import threading
 
 # ==================== 项目内部导入 ====================
 # 保证无论从项目根目录（作为 src.checkin_system 被 import）还是直接运行
@@ -167,47 +168,90 @@ class MLPCheckInSystem:
     # 编码器动态加载 / 切换
     # ---------------------------------------------------------------
     def _load_encoder(self, name: str):
-        """按名称构造编码器（含其内部双 MLP 头），并设为当前激活编码器。"""
+        """按名称构造编码器（含其内部双 MLP 头），并设为当前激活编码器。
+
+        注意：构造编码器会同步加载 Transformers / CLIP 权重，可能耗时数秒。
+        UI 中切换模型时请走 _on_encoder_change（后台线程），避免阻塞主事件循环。
+        """
         enc = get_encoder(name, device=self.device)
         self.encoder = enc
         self.encoder_name = name
         print(f"编码器已加载: {enc.name} ({self.device})")
 
     def _on_encoder_change(self, event=None):
-        """UI 下拉框切换模型：重载编码器与其 MLP 头，并刷新界面文案。"""
+        """UI 下拉框切换模型：在后台线程加载编码器，加载完成后再回主线程刷新界面。
+
+        这样切换 SigLIP 这种大模型时，窗口不会进入"未响应"状态。
+        """
         name = self.encoder_var.get()
         if name == self.encoder_name:
             return
-        self.info_text.insert(tk.END, f"\n正在切换到模型: {name} ...\n")
+
+        # 防止加载过程中再次切换；下拉框变灰
+        self.encoder_combo.config(state='disabled')
+        self._set_loading_state(True, f"正在加载模型 {name}，请稍候 ...")
+        self.info_text.insert(tk.END, f"\n[切换] 正在后台加载模型: {name} ...\n")
         self.info_text.see(tk.END)
-        self.root.update()
-        try:
-            self._load_encoder(name)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            messagebox.showerror("模型加载失败",
-                                 f"无法加载编码器 [{name}]:\n{e}\n\n已回退到 {self.encoder_name}。")
-            self.encoder_var.set(self.encoder_name)
-            return
+
+        # 记录旧模型，加载失败时回退
+        old_name = self.encoder_name
+
+        def _load_thread():
+            try:
+                self._load_encoder(name)
+                # 成功 -> 回主线程更新 UI
+                self.root.after(0, lambda: self._on_encoder_loaded(name))
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                # 失败 -> 回主线程提示并回退
+                self.root.after(0, lambda: self._on_encoder_failed(name, old_name, str(e)))
+
+        threading.Thread(target=_load_thread, daemon=True).start()
+
+    def _on_encoder_loaded(self, name: str):
+        """编码器后台加载成功后的主线程回调。"""
+        self._set_loading_state(False)
         self._update_encoder_ui()
-        self.info_text.insert(tk.END, f"已切换至: {self.encoder.name}\n")
+        self.info_text.insert(tk.END, f"[完成] 已切换至: {self.encoder.name}\n")
         self.info_text.see(tk.END)
+        self.encoder_combo.config(state='readonly')
+
+    def _on_encoder_failed(self, name: str, old_name: str, err: str):
+        """编码器后台加载失败后的主线程回调：提示错误并回退到原模型。"""
+        self._set_loading_state(False)
+        self.encoder_var.set(old_name)
+        self.encoder_combo.config(state='readonly')
+        messagebox.showerror("模型加载失败",
+                             f"无法加载编码器 [{name}]:\n{err}\n\n已保持当前模型 {old_name}。")
+        self.info_text.insert(tk.END, f"[失败] 无法加载 {name}，仍使用 {old_name}\n")
+        self.info_text.see(tk.END)
+
+    def _set_loading_state(self, loading: bool, text: str = ""):
+        """切换加载状态：状态栏显示加载提示，加载期间禁用主要操作按钮（可选）。"""
+        if loading:
+            self.status_label.config(text=text)
+        else:
+            disp = getattr(self.encoder, "name", self.encoder_name)
+            self.status_label.config(text=f"就绪 | 模型: {disp} + MLP | 准确率: 99.95%")
 
     def _update_encoder_ui(self):
         """根据当前编码器刷新标题副标题、状态栏、参数栏文案。"""
         disp = getattr(self.encoder, "name", self.encoder_name)
         # 窗口标题
-        self.root.title(f"晨读晨练签到检测系统 - {disp}")
+        if getattr(self, "root", None) is not None:
+            self.root.title(f"晨读晨练签到检测系统 - {disp}")
         # 标题副标题（canvas 文本项）
         if getattr(self, "subtitle_id", None) is not None:
             self.title_canvas.itemconfig(self.subtitle_id, text=f"MLP分类器 + {disp}特征提取")
         # 状态栏
-        self.status_label.config(text=f"就绪 | 模型: {disp} + MLP | 准确率: 99.95%")
+        if getattr(self, "status_label", None) is not None:
+            self.status_label.config(text=f"就绪 | 模型: {disp} + MLP | 准确率: 99.95%")
         # 参数栏
-        params_text = (f"编码器: {disp} | 二分类MLP | 自动通过≥{ALPHA_AUTO_PASS} | "
-                       f"待审核<{ALPHA_REVIEW} | 特征≥{MIN_FEATURES}")
-        self.param_label.config(text=params_text)
+        if getattr(self, "param_label", None) is not None:
+            params_text = (f"编码器: {disp} | 二分类MLP | 自动通过≥{ALPHA_AUTO_PASS} | "
+                           f"待审核<{ALPHA_REVIEW} | 特征≥{MIN_FEATURES}")
+            self.param_label.config(text=params_text)
 
     def _encoder_choices(self):
         """下拉框可用选项：只暴露已具备权重、可实例化的编码器。
